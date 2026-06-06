@@ -5,7 +5,8 @@ export const exportChartAsImage = (
   chartRef: ChartRef | null,
   pageName: string,
   entityName: string,
-  timeRange: string
+  timeRange: string,
+  filename?: string
 ) => {
   if (!chartRef) return;
   const chart = chartRef.getEchartsInstance();
@@ -15,8 +16,12 @@ export const exportChartAsImage = (
     backgroundColor: "#fff",
   });
   const link = document.createElement("a");
-  const timestamp = new Date().toISOString().slice(0, 10);
-  link.download = `${pageName}_${entityName}_${timeRange}_${timestamp}.png`;
+  if (filename) {
+    link.download = filename;
+  } else {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    link.download = `${pageName}_${entityName}_${timeRange}_${timestamp}.png`;
+  }
   link.href = url;
   link.click();
 };
@@ -26,7 +31,8 @@ export const exportTableAsCSV = (
   rows: (string | number)[][],
   pageName: string,
   entityName: string,
-  timeRange: string
+  timeRange: string,
+  filename?: string
 ) => {
   const csvContent = [
     headers.join(","),
@@ -37,8 +43,12 @@ export const exportTableAsCSV = (
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const timestamp = new Date().toISOString().slice(0, 10);
-  link.download = `${pageName}_${entityName}_${timeRange}_${timestamp}.csv`;
+  if (filename) {
+    link.download = filename;
+  } else {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    link.download = `${pageName}_${entityName}_${timeRange}_${timestamp}.csv`;
+  }
   link.href = url;
   link.click();
   URL.revokeObjectURL(url);

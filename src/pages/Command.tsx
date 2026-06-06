@@ -18,28 +18,54 @@ import {
   RefreshCw,
   Square,
   CheckSquare as CheckSquareIcon,
+  ThumbsUp,
+  ThumbsDown,
+  FileCheck,
+  RotateCcw,
+  Filter,
 } from "lucide-react";
 import StatusBadge from "../components/Common/StatusBadge";
-import { dispatchLogs, schemes } from "../data/command";
+import { dispatchLogs, schemes, smsTemplates } from "../data/command";
 import { reservoirs } from "../data/reservoir";
 import { formatTime } from "../utils/format";
-import type { Command, CommandFormData } from "../types";
+import type { Command, CommandFormData, SmsTemplate } from "../types";
 import { useAppStore } from "../store/useAppStore";
 
 export default function CommandPage() {
-  const { commands, smsRecords, receivers, currentUser, addCommand, updateCommandStatus, sendSms, batchSendSms, resendSms } =
-    useAppStore();
+  const [searchParams] = useSearchParams();
+  const { 
+    commands, 
+    smsRecords, 
+    receivers, 
+    currentUser, 
+    addCommand, 
+    updateCommandStatus, 
+    sendSms, 
+    batchSendSms, 
+    resendSms,
+    approveCommand,
+    rejectCommand,
+    confirmCompletion,
+    returnForReexecution,
+  } = useAppStore();
 
   const [selectedCommand, setSelectedCommand] = useState<Command | null>(commands[0] || null);
   const [showNewModal, setShowNewModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showSmsModal, setShowSmsModal] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showReexecuteModal, setShowReexecuteModal] = useState(false);
   const [activeTab, setActiveTab] = useState<"detail" | "sms">("detail");
   const [feedback, setFeedback] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [reexecuteReason, setReexecuteReason] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    pending_approval: true,
     pending: true,
     executing: true,
     completed: true,
+    rejected: true,
   });
 
   const [formData, setFormData] = useState<CommandFormData>({
@@ -54,6 +80,13 @@ export default function CommandPage() {
   const [selectedSmsReceivers, setSelectedSmsReceivers] = useState<string[]>([]);
   const [selectedCommandIds, setSelectedCommandIds] = useState<string[]>([]);
   const [showBatchSmsModal, setShowBatchSmsModal] = useState(false);
+  const [selectedSmsTemplateId, setSelectedSmsTemplateId] = useState<string>("");
+  const [smsStatusFilter, setSmsStatusFilter] = useState<"all" | "sent" | "failed" | "sending">("all");
+
+  const pendingApprovalCommands = useMemo(
+    () => commands.filter((c) => c.status === "pending_approval"),
+    [commands]
+  );
 
   const pendingCommands = useMemo(
     () => commands.filter((c) => c.status === "pending"),
@@ -67,12 +100,14 @@ export default function CommandPage() {
 
   const groupedCommands = useMemo(() => {
     const groups: Record<string, Command[]> = {
+      pending_approval: [],
       pending: [],
       executing: [],
       completed: [],
+      rejected: [],
     };
     commands.forEach((cmd) => {
-      if (cmd.status === "cancelled") return;
+      if (cmd.status === "cancelled" || cmd.status === "draft") return;
       groups[cmd.status]?.push(cmd);
     });
     return groups;
@@ -80,8 +115,27 @@ export default function CommandPage() {
 
   const commandSmsRecords = useMemo(() => {
     if (!selectedCommand) return [];
-    return smsRecords.filter((sms) => sms.commandId === selectedCommand.id);
-  }, [smsRecords, selectedCommand]);
+    let records = smsRecords.filter((sms) => sms.commandId === selectedCommand.id);
+    if (smsStatusFilter !== "all") {
+      records = records.filter((sms) => sms.status === smsStatusFilter);
+    }
+    return records;
+  }, [smsRecords, selectedCommand, smsStatusFilter]);
+
+  const getSmsTemplatePreview = (templateId: string, command: Command | null): string => {
+    if (!templateId || !command) return "";
+    const template = smsTemplates.find((t) => t.id === templateId);
+    if (!template) return "";
+    let content = template.content;
+    const variables: Record<string, string> = {
+      "指令标题": command.title,
+      "执行人": command.executor,
+    };
+    Object.keys(variables).forEach((key) => {
+      content = content.replace(new RegExp(`\\{${key}\\}`, "g"), variables[key]);
+    });
+    return content;
+  };
 
   const toggleGroup = (status: string) => {
     setExpandedGroups((prev) => ({ ...prev, [status]: !prev[status] }));
@@ -170,9 +224,11 @@ export default function CommandPage() {
       alert("请选择接收人");
       return;
     }
-    sendSms(selectedCommand.id, selectedSmsReceivers);
+    const customContent = selectedSmsTemplateId ? getSmsTemplatePreview(selectedSmsTemplateId, selectedCommand) : undefined;
+    sendSms(selectedCommand.id, selectedSmsReceivers, selectedSmsTemplateId || undefined, customContent);
     setShowSmsModal(false);
     setSelectedSmsReceivers([]);
+    setSelectedSmsTemplateId("");
   };
 
   const handleToggleSelectAll = () => {
@@ -241,10 +297,75 @@ export default function CommandPage() {
     }
   };
 
+  const handleApprove = () => {
+    if (!selectedCommand) return;
+    setShowApproveModal(true);
+  };
+
+  const handleConfirmApprove = () => {
+    if (!selectedCommand) return;
+    approveCommand(selectedCommand.id, currentUser.name);
+    setShowApproveModal(false);
+    if (selectedCommand) {
+      setSelectedCommand({ ...selectedCommand, status: "pending", approver: currentUser.name });
+    }
+  };
+
+  const handleReject = () => {
+    if (!selectedCommand) return;
+    setRejectReason("");
+    setShowRejectModal(true);
+  };
+
+  const handleConfirmReject = () => {
+    if (!selectedCommand || !rejectReason) {
+      alert("请填写退回原因");
+      return;
+    }
+    rejectCommand(selectedCommand.id, rejectReason, currentUser.name);
+    setShowRejectModal(false);
+    if (selectedCommand) {
+      setSelectedCommand({ ...selectedCommand, status: "rejected", rejectReason, approver: currentUser.name });
+    }
+    setRejectReason("");
+  };
+
+  const handleConfirmCompletion = () => {
+    if (!selectedCommand) return;
+    confirmCompletion(selectedCommand.id, currentUser.name);
+    if (selectedCommand) {
+      setSelectedCommand({ ...selectedCommand, confirmer: currentUser.name });
+    }
+  };
+
+  const handleReturnForReexecution = () => {
+    if (!selectedCommand) return;
+    setReexecuteReason("");
+    setShowReexecuteModal(true);
+  };
+
+  const handleConfirmReexecute = () => {
+    if (!selectedCommand || !reexecuteReason) {
+      alert("请填写退回原因");
+      return;
+    }
+    returnForReexecution(selectedCommand.id, reexecuteReason);
+    setShowReexecuteModal(false);
+    if (selectedCommand) {
+      setSelectedCommand({ ...selectedCommand, status: "executing", rejectReason: reexecuteReason });
+    }
+    setReexecuteReason("");
+  };
+
   const statusLabels: Record<string, string> = {
+    draft: "草稿",
+    pending_approval: "待审核",
+    approved: "已审核",
+    rejected: "已退回",
     pending: "待执行",
     executing: "执行中",
     completed: "已完成",
+    cancelled: "已取消",
   };
 
   return (
@@ -303,7 +424,7 @@ export default function CommandPage() {
             </button>
           </div>
           
-          {(["pending", "executing", "completed"] as const).map((status) => (
+          {(["pending_approval", "pending", "executing", "completed", "rejected"] as const).map((status) => (
             <div key={status} className="space-y-2">
               <button
                 onClick={() => toggleGroup(status)}
@@ -449,6 +570,22 @@ export default function CommandPage() {
                           <StatusBadge status={selectedCommand.status} />
                         </p>
                       </div>
+                      {selectedCommand.approver && (
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-xs text-gray-500 mb-1">审核人</p>
+                          <p className="font-medium text-gray-800">
+                            {selectedCommand.approver}
+                          </p>
+                        </div>
+                      )}
+                      {selectedCommand.approvalTime && (
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-xs text-gray-500 mb-1">审核时间</p>
+                          <p className="font-medium text-gray-800">
+                            {formatTime(selectedCommand.approvalTime)}
+                          </p>
+                        </div>
+                      )}
                       {selectedCommand.executeTime && (
                         <div className="p-3 bg-gray-50 rounded-lg">
                           <p className="text-xs text-gray-500 mb-1">开始执行时间</p>
@@ -465,7 +602,33 @@ export default function CommandPage() {
                           </p>
                         </div>
                       )}
+                      {selectedCommand.confirmer && (
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-xs text-gray-500 mb-1">确认人</p>
+                          <p className="font-medium text-gray-800">
+                            {selectedCommand.confirmer}
+                          </p>
+                        </div>
+                      )}
+                      {selectedCommand.confirmTime && (
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-xs text-gray-500 mb-1">确认时间</p>
+                          <p className="font-medium text-gray-800">
+                            {formatTime(selectedCommand.confirmTime)}
+                          </p>
+                        </div>
+                      )}
                     </div>
+
+                    {selectedCommand.rejectReason && (
+                      <div className="bg-red-50 rounded-lg p-4 border border-red-100 mb-4">
+                        <h4 className="text-sm font-medium text-red-700 mb-2 flex items-center gap-2">
+                          <XCircle className="w-4 h-4" />
+                          退回原因
+                        </h4>
+                        <p className="text-gray-800">{selectedCommand.rejectReason}</p>
+                      </div>
+                    )}
 
                     {selectedCommand.feedback && (
                       <div className="bg-green-50 rounded-lg p-4 border border-green-100 mb-4">
@@ -477,7 +640,106 @@ export default function CommandPage() {
                       </div>
                     )}
 
-                    <div className="flex gap-3">
+                    <div className="data-card mb-4">
+                      <h4 className="font-semibold text-gray-800 mb-4">审批流转时间轴</h4>
+                      <div className="relative">
+                        <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
+                        <div className="space-y-4">
+                          <div className="relative pl-10">
+                            <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-primary-500" />
+                            <div className="bg-gray-50 rounded-lg p-3">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-medium text-sm text-gray-800">创建指令</span>
+                                <span className="text-xs text-gray-500">{formatTime(selectedCommand.createTime)}</span>
+                              </div>
+                              <p className="text-sm text-gray-600">创建人: {selectedCommand.creator}</p>
+                            </div>
+                          </div>
+                          {selectedCommand.status !== "draft" && (
+                            <div className="relative pl-10">
+                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-blue-500" />
+                              <div className="bg-gray-50 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-medium text-sm text-gray-800">提交审核</span>
+                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.createTime)}</span>
+                                </div>
+                                <p className="text-sm text-gray-600">提交人: {selectedCommand.creator}</p>
+                              </div>
+                            </div>
+                          )}
+                          {selectedCommand.approvalTime && (
+                            <div className="relative pl-10">
+                              <div className={`absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white ${selectedCommand.status === "rejected" ? "bg-red-500" : "bg-green-500"}`} />
+                              <div className="bg-gray-50 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-medium text-sm text-gray-800">
+                                    {selectedCommand.status === "rejected" ? "审核退回" : "审核通过"}
+                                  </span>
+                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.approvalTime)}</span>
+                                </div>
+                                <p className="text-sm text-gray-600">审核人: {selectedCommand.approver}</p>
+                              </div>
+                            </div>
+                          )}
+                          {selectedCommand.executeTime && (
+                            <div className="relative pl-10">
+                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-orange-500" />
+                              <div className="bg-gray-50 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-medium text-sm text-gray-800">开始执行</span>
+                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.executeTime)}</span>
+                                </div>
+                                <p className="text-sm text-gray-600">执行人: {selectedCommand.executor}</p>
+                              </div>
+                            </div>
+                          )}
+                          {selectedCommand.completeTime && (
+                            <div className="relative pl-10">
+                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-teal-500" />
+                              <div className="bg-gray-50 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-medium text-sm text-gray-800">执行回填</span>
+                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.completeTime)}</span>
+                                </div>
+                                <p className="text-sm text-gray-600">执行人: {selectedCommand.executor}</p>
+                              </div>
+                            </div>
+                          )}
+                          {selectedCommand.confirmTime && (
+                            <div className="relative pl-10">
+                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-purple-500" />
+                              <div className="bg-gray-50 rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-medium text-sm text-gray-800">确认完成</span>
+                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.confirmTime)}</span>
+                                </div>
+                                <p className="text-sm text-gray-600">确认人: {selectedCommand.confirmer}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3 flex-wrap">
+                      {selectedCommand.status === "pending_approval" && (
+                        <>
+                          <button
+                            onClick={handleApprove}
+                            className="btn-primary flex items-center gap-2"
+                          >
+                            <ThumbsUp className="w-4 h-4" />
+                            审核通过
+                          </button>
+                          <button
+                            onClick={handleReject}
+                            className="btn-secondary flex items-center gap-2 text-red-600 border-red-200 hover:bg-red-50"
+                          >
+                            <ThumbsDown className="w-4 h-4" />
+                            退回
+                          </button>
+                        </>
+                      )}
                       {selectedCommand.status === "pending" && (
                         <>
                           <button
@@ -521,12 +783,49 @@ export default function CommandPage() {
                           </button>
                         </>
                       )}
+                      {selectedCommand.status === "completed" && !selectedCommand.confirmTime && (
+                        <>
+                          <button
+                            onClick={handleConfirmCompletion}
+                            className="btn-primary flex items-center gap-2"
+                          >
+                            <FileCheck className="w-4 h-4" />
+                            确认完成
+                          </button>
+                          <button
+                            onClick={handleReturnForReexecution}
+                            className="btn-secondary flex items-center gap-2 text-orange-600 border-orange-200 hover:bg-orange-50"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                            退回重填
+                          </button>
+                        </>
+                      )}
                     </div>
                   </>
                 )}
 
                 {activeTab === "sms" && (
                   <div className="space-y-3">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Filter className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm text-gray-600">状态筛选:</span>
+                      <div className="flex gap-2">
+                        {(["all", "sent", "failed", "sending"] as const).map((status) => (
+                          <button
+                            key={status}
+                            onClick={() => setSmsStatusFilter(status)}
+                            className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                              smsStatusFilter === status
+                                ? "bg-primary-100 text-primary-700 font-medium"
+                                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                            }`}
+                          >
+                            {status === "all" ? "全部" : status === "sent" ? "已发送" : status === "failed" ? "发送失败" : "发送中"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     {commandSmsRecords.length === 0 ? (
                       <div className="text-center text-gray-400 py-8">
                         暂无短信记录
@@ -548,6 +847,11 @@ export default function CommandPage() {
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
+                              {selectedCommand?.smsTemplateId && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                                  {smsTemplates.find((t) => t.id === selectedCommand.smsTemplateId)?.name}
+                                </span>
+                              )}
                               <span
                                 className={`text-xs px-2 py-0.5 rounded-full ${
                                   sms.status === "sent"
@@ -840,19 +1144,62 @@ export default function CommandPage() {
 
       {showSmsModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-[500px] animate-slide-up">
+          <div className="bg-white rounded-xl p-6 w-[550px] max-h-[90vh] overflow-y-auto animate-slide-up">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-800">发送短信提醒</h3>
               <button
-                onClick={() => setShowSmsModal(false)}
+                onClick={() => {
+                  setShowSmsModal(false);
+                  setSelectedSmsTemplateId("");
+                }}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="mb-4">
+              <label className="block text-sm text-gray-600 mb-2">选择短信模板</label>
+              <select
+                value={selectedSmsTemplateId}
+                onChange={(e) => setSelectedSmsTemplateId(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                <option value="">不使用模板（默认内容）</option>
+                {smsTemplates.map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedSmsTemplateId && (
+              <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                <h4 className="text-sm font-medium text-blue-700 mb-2">短信内容预览</h4>
+                <p className="text-sm text-gray-800 whitespace-pre-wrap">
+                  {getSmsTemplatePreview(selectedSmsTemplateId, selectedCommand)}
+                </p>
+                {smsTemplates.find((t) => t.id === selectedSmsTemplateId)?.variables && (
+                  <div className="mt-2 pt-2 border-t border-blue-200">
+                    <p className="text-xs text-blue-600 mb-1">可用变量:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {smsTemplates
+                        .find((t) => t.id === selectedSmsTemplateId)
+                        ?.variables.map((v) => (
+                          <span
+                            key={v}
+                            className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full"
+                          >
+                            {`{${v}}`}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="mb-4">
               <label className="block text-sm text-gray-600 mb-2">选择接收人</label>
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
                 {receivers.map((rec) => (
                   <label
                     key={rec.id}
@@ -973,6 +1320,116 @@ export default function CommandPage() {
               </button>
               <button onClick={handleConfirmBatchSms} className="btn-primary">
                 批量发送
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showApproveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-[450px] animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">审核通过</h3>
+              <button
+                onClick={() => setShowApproveModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="mb-6">
+              <div className="p-4 bg-green-50 rounded-lg border border-green-100">
+                <p className="text-sm text-green-700">
+                  确定要通过这条指令的审核吗？通过后指令将进入待执行状态。
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowApproveModal(false)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button onClick={handleConfirmApprove} className="btn-primary">
+                确认通过
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-[500px] animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">审核退回</h3>
+              <button
+                onClick={() => setShowRejectModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm text-gray-600 mb-2">
+                退回原因 <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                placeholder="请输入退回原因..."
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowRejectModal(false)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button onClick={handleConfirmReject} className="btn-primary bg-red-600 hover:bg-red-700">
+                确认退回
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReexecuteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-[500px] animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">退回重填</h3>
+              <button
+                onClick={() => setShowReexecuteModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm text-gray-600 mb-2">
+                退回原因 <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={reexecuteReason}
+                onChange={(e) => setReexecuteReason(e.target.value)}
+                className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                placeholder="请输入退回重填的原因..."
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowReexecuteModal(false)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button onClick={handleConfirmReexecute} className="btn-primary bg-orange-600 hover:bg-orange-700">
+                确认退回
               </button>
             </div>
           </div>

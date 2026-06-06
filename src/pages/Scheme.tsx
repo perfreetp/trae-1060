@@ -11,6 +11,12 @@ import {
   Plus,
   Eye,
   FileText,
+  History,
+  RotateCcw,
+  GitCompare,
+  Check,
+  X,
+  Save,
 } from "lucide-react";
 import BasinMap from "../components/Map/BasinMap";
 import StatusBadge from "../components/Common/StatusBadge";
@@ -23,6 +29,8 @@ import type {
   RiskPoint,
   DownstreamSection,
   Command,
+  SchemeVersion,
+  ReservoirOperation,
 } from "../types";
 import { formatNumber, formatTime } from "../utils/format";
 import { useAppStore } from "../store/useAppStore";
@@ -50,10 +58,11 @@ const calculateOverlapHours = (
 
 export default function Scheme() {
   const navigate = useNavigate();
-  const { getCommandsBySchemeId } = useAppStore();
+  const { getCommandsBySchemeId, getVersionsBySchemeId, createVersion, rollbackToVersion, currentUser } = useAppStore();
   
   const [selectedScheme, setSelectedScheme] = useState(schemes[0]);
   const [showSchemeDropdown, setShowSchemeDropdown] = useState(false);
+  const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [highlightedReservoirId, setHighlightedReservoirId] = useState<
     string | null
   >(null);
@@ -69,6 +78,11 @@ export default function Scheme() {
     }))
   );
   const [isSimulating, setIsSimulating] = useState(false);
+  const [selectedVersions, setSelectedVersions] = useState<string[]>([]);
+  const [showComparePanel, setShowComparePanel] = useState(false);
+  const [showSaveVersionModal, setShowSaveVersionModal] = useState(false);
+  const [newVersionDescription, setNewVersionDescription] = useState("");
+  const [currentVersionId, setCurrentVersionId] = useState<string>("version-003");
 
   const timeOptions = [
     "2024-06-06 00:00:00",
@@ -330,6 +344,94 @@ export default function Scheme() {
     ]),
   };
 
+  const versions = useMemo(() => {
+    return getVersionsBySchemeId(selectedScheme.id);
+  }, [selectedScheme.id, getVersionsBySchemeId]);
+
+  const currentVersion = useMemo(() => {
+    return versions.find(v => v.id === currentVersionId);
+  }, [versions, currentVersionId]);
+
+  const handleVersionSelect = (versionId: string) => {
+    const operations = rollbackToVersion(selectedScheme.id, versionId);
+    if (operations) {
+      const newStates = operations.map(op => ({
+        reservoirId: op.reservoirId,
+        targetLevel: op.targetLevel,
+        discharge: op.discharge,
+        startTime: op.startTime,
+        endTime: op.endTime,
+      }));
+      setSimulationStates(newStates);
+      setCurrentVersionId(versionId);
+    }
+    setShowVersionDropdown(false);
+  };
+
+  const handleToggleVersionCompare = (versionId: string) => {
+    setSelectedVersions(prev => {
+      if (prev.includes(versionId)) {
+        return prev.filter(id => id !== versionId);
+      } else if (prev.length < 2) {
+        return [...prev, versionId];
+      }
+      return prev;
+    });
+  };
+
+  const handleCompare = () => {
+    if (selectedVersions.length === 2) {
+      setShowComparePanel(true);
+      setShowVersionDropdown(false);
+    }
+  };
+
+  const handleRollback = (versionId: string) => {
+    handleVersionSelect(versionId);
+  };
+
+  const handleSaveVersion = () => {
+    if (!newVersionDescription.trim()) return;
+    const operations: ReservoirOperation[] = simulationStates.map(state => {
+      const reservoir = reservoirs.find(r => r.id === state.reservoirId);
+      return {
+        reservoirId: state.reservoirId,
+        reservoirName: reservoir?.name || "",
+        targetLevel: state.targetLevel,
+        discharge: state.discharge,
+        startTime: state.startTime,
+        endTime: state.endTime,
+      };
+    });
+    createVersion(selectedScheme.id, operations, newVersionDescription, currentUser.name);
+    setNewVersionDescription("");
+    setShowSaveVersionModal(false);
+  };
+
+  const compareData = useMemo(() => {
+    if (selectedVersions.length !== 2) return null;
+    const v1 = versions.find(v => v.id === selectedVersions[0]);
+    const v2 = versions.find(v => v.id === selectedVersions[1]);
+    if (!v1 || !v2) return null;
+
+    const diffs = reservoirs.map(res => {
+      const op1 = v1.reservoirOperations.find(o => o.reservoirId === res.id);
+      const op2 = v2.reservoirOperations.find(o => o.reservoirId === res.id);
+      return {
+        reservoirId: res.id,
+        reservoirName: res.name,
+        targetLevelDiff: (op2?.targetLevel || 0) - (op1?.targetLevel || 0),
+        dischargeDiff: (op2?.discharge || 0) - (op1?.discharge || 0),
+        v1TargetLevel: op1?.targetLevel || 0,
+        v2TargetLevel: op2?.targetLevel || 0,
+        v1Discharge: op1?.discharge || 0,
+        v2Discharge: op2?.discharge || 0,
+      };
+    });
+
+    return { v1, v2, diffs };
+  }, [selectedVersions, versions]);
+
   const handleGenerateCommand = () => {
     if (!selectedScheme) return;
     navigate(`/command?schemeId=${selectedScheme.id}`);
@@ -387,6 +489,109 @@ export default function Scheme() {
               </div>
             )}
           </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowVersionDropdown(!showVersionDropdown)}
+              className="btn-secondary flex items-center gap-2 min-w-[220px] justify-between"
+            >
+              <History className="w-4 h-4 text-primary-500" />
+              <span className="truncate">
+                {currentVersion ? currentVersion.name : "选择版本"}
+              </span>
+              <ChevronDown className="w-4 h-4 flex-shrink-0" />
+            </button>
+            {showVersionDropdown && (
+              <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-30 min-w-[360px] max-h-96 overflow-y-auto">
+                <div className="px-4 py-2 border-b border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">版本列表</span>
+                    <span className="text-xs text-gray-500">勾选2个版本可对比</span>
+                  </div>
+                </div>
+                {versions.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-gray-500">
+                    <History className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                    <p className="text-sm">暂无版本记录</p>
+                  </div>
+                ) : (
+                  <>
+                    {versions.map((version) => (
+                      <div
+                        key={version.id}
+                        className={`px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${
+                          currentVersionId === version.id ? "bg-primary-50" : ""
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="pt-0.5">
+                            <input
+                              type="checkbox"
+                              checked={selectedVersions.includes(version.id)}
+                              onChange={() => handleToggleVersionCompare(version.id)}
+                              className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-800">
+                                {version.name}
+                              </span>
+                              {currentVersionId === version.id && (
+                                <span className="px-1.5 py-0.5 bg-primary-100 text-primary-700 text-xs font-medium rounded">
+                                  当前
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                              创建人: {version.creator} · {formatTime(version.createTime)}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1 truncate">
+                              {version.description}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRollback(version.id);
+                              }}
+                              className="p-1.5 text-gray-500 hover:text-primary-600 hover:bg-primary-50 rounded transition-colors"
+                              title="回滚到此版本"
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
+                      <button
+                        onClick={handleCompare}
+                        disabled={selectedVersions.length !== 2}
+                        className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          selectedVersions.length === 2
+                            ? "bg-primary-600 text-white hover:bg-primary-700"
+                            : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                        }`}
+                      >
+                        <GitCompare className="w-4 h-4" />
+                        对比选中版本 ({selectedVersions.length}/2)
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {currentVersion && (
+            <div className="text-sm text-gray-500">
+              <span className="text-gray-400">当前版本创建于 </span>
+              <span className="text-gray-700">{formatTime(currentVersion.createTime)}</span>
+            </div>
+          )}
+
           <button
             onClick={handleRunSimulation}
             disabled={isSimulating}
@@ -407,10 +612,19 @@ export default function Scheme() {
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-4 space-y-4">
           <div className="data-card">
-            <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Droplets className="w-5 h-5 text-primary-500" />
-              水库参数调整
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                <Droplets className="w-5 h-5 text-primary-500" />
+                水库参数调整
+              </h3>
+              <button
+                onClick={() => setShowSaveVersionModal(true)}
+                className="btn-secondary flex items-center gap-1.5 text-sm"
+              >
+                <Save className="w-4 h-4" />
+                保存为新版本
+              </button>
+            </div>
             <div className="space-y-4 max-h-[calc(100vh-320px)] overflow-y-auto pr-2">
               {reservoirs.map((reservoir) => {
                 const state = simulationStates.find(
@@ -791,6 +1005,159 @@ export default function Scheme() {
           </div>
         )}
       </div>
+
+      {showComparePanel && compareData && (
+        <div className="data-card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+              <GitCompare className="w-5 h-5 text-primary-500" />
+              版本对比
+            </h3>
+            <button
+              onClick={() => {
+                setShowComparePanel(false);
+                setSelectedVersions([]);
+              }}
+              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-12 gap-4 mb-4">
+            <div className="col-span-5 p-3 bg-blue-50 rounded-lg">
+              <p className="text-xs text-blue-600 font-medium mb-1">版本 A</p>
+              <p className="text-sm font-medium text-blue-800">{compareData.v1.name}</p>
+              <p className="text-xs text-blue-600 mt-1">
+                {compareData.v1.creator} · {formatTime(compareData.v1.createTime)}
+              </p>
+            </div>
+            <div className="col-span-2 flex items-center justify-center">
+              <GitCompare className="w-6 h-6 text-gray-400" />
+            </div>
+            <div className="col-span-5 p-3 bg-green-50 rounded-lg">
+              <p className="text-xs text-green-600 font-medium mb-1">版本 B</p>
+              <p className="text-sm font-medium text-green-800">{compareData.v2.name}</p>
+              <p className="text-xs text-green-600 mt-1">
+                {compareData.v2.creator} · {formatTime(compareData.v2.createTime)}
+              </p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    水库名称
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本A目标水位
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本B目标水位
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    水位差异
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本A泄流量
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本B泄流量
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    泄流量差异
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareData.diffs.map((diff) => (
+                  <tr key={diff.reservoirId} className="border-b border-gray-100">
+                    <td className="py-3 px-4 text-sm font-medium text-gray-800">
+                      {diff.reservoirName}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-right font-mono text-blue-600">
+                      {diff.v1TargetLevel} m
+                    </td>
+                    <td className="py-3 px-4 text-sm text-right font-mono text-green-600">
+                      {diff.v2TargetLevel} m
+                    </td>
+                    <td className="py-3 px-4 text-sm text-right font-mono">
+                      <span className={diff.targetLevelDiff > 0 ? "text-red-600" : diff.targetLevelDiff < 0 ? "text-green-600" : "text-gray-500"}>
+                        {diff.targetLevelDiff > 0 ? "+" : ""}{diff.targetLevelDiff.toFixed(1)} m
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-right font-mono text-blue-600">
+                      {diff.v1Discharge} m³/s
+                    </td>
+                    <td className="py-3 px-4 text-sm text-right font-mono text-green-600">
+                      {diff.v2Discharge} m³/s
+                    </td>
+                    <td className="py-3 px-4 text-sm text-right font-mono">
+                      <span className={diff.dischargeDiff > 0 ? "text-red-600" : diff.dischargeDiff < 0 ? "text-green-600" : "text-gray-500"}>
+                        {diff.dischargeDiff > 0 ? "+" : ""}{diff.dischargeDiff} m³/s
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {showSaveVersionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800">保存为新版本</h3>
+              <button
+                onClick={() => {
+                  setShowSaveVersionModal(false);
+                  setNewVersionDescription("");
+                }}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                版本说明
+              </label>
+              <textarea
+                value={newVersionDescription}
+                onChange={(e) => setNewVersionDescription(e.target.value)}
+                placeholder="请输入本次版本的修改说明..."
+                rows={4}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowSaveVersionModal(false);
+                  setNewVersionDescription("");
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveVersion}
+                disabled={!newVersionDescription.trim()}
+                className={`px-4 py-2 text-sm font-medium rounded-lg flex items-center gap-2 transition-colors ${
+                  newVersionDescription.trim()
+                    ? "bg-primary-600 text-white hover:bg-primary-700"
+                    : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                }`}
+              >
+                <Save className="w-4 h-4" />
+                保存版本
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

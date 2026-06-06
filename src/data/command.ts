@@ -1,4 +1,4 @@
-import type { Command, DispatchLog, Scheme, AlertItem, SmsRecord } from "../types";
+import type { Command, DispatchLog, Scheme, AlertItem, SmsRecord, SmsTemplate, SchemeVersion } from "../types";
 
 export const commands: Command[] = [
   {
@@ -11,6 +11,9 @@ export const commands: Command[] = [
     status: "executing",
     executeTime: "2024-06-06 09:45:00",
     smsSent: true,
+    approvalTime: "2024-06-06 09:35:00",
+    approver: "李主任",
+    smsTemplateId: "tpl-001",
   },
   {
     id: "cmd-002",
@@ -24,6 +27,11 @@ export const commands: Command[] = [
     completeTime: "2024-06-06 08:30:00",
     feedback: "已按指令调整出库流量至800m³/s，当前库水位160.2m，运行正常。",
     smsSent: true,
+    approvalTime: "2024-06-06 08:05:00",
+    approver: "李主任",
+    confirmTime: "2024-06-06 08:40:00",
+    confirmer: "张调度",
+    smsTemplateId: "tpl-001",
   },
   {
     id: "cmd-003",
@@ -34,6 +42,29 @@ export const commands: Command[] = [
     executor: "陈值班",
     status: "pending",
     smsSent: false,
+    approvalTime: "2024-06-06 07:10:00",
+    approver: "李主任",
+  },
+  {
+    id: "cmd-004",
+    title: "隔河岩水库紧急泄洪",
+    content: "受强降雨影响，隔河岩水库水位上涨迅速，需立即加大泄洪至1200m³/s，确保水库安全。",
+    createTime: "2024-06-06 10:00:00",
+    creator: "王调度",
+    executor: "赵值班",
+    status: "pending_approval",
+    smsSent: false,
+  },
+  {
+    id: "cmd-005",
+    title: "高坝洲水库预泄腾库",
+    content: "根据天气预报，未来3天有强降雨过程，高坝洲水库提前预泄，将水位降至100m以下。",
+    createTime: "2024-06-06 09:00:00",
+    creator: "李调度",
+    executor: "孙值班",
+    status: "rejected",
+    smsSent: false,
+    rejectReason: "当前水情平稳，无需提前预泄，建议密切关注雨情变化后再决策。",
   },
 ];
 
@@ -89,6 +120,7 @@ export const schemes: Scheme[] = [
     createTime: "2024-06-05 15:30:00",
     creator: "张调度",
     status: "approved",
+    currentVersion: 3,
     reservoirOperations: [
       {
         reservoirId: "res-001",
@@ -244,4 +276,133 @@ export const receivers = [
   { id: "r-003", name: "陈值班", phone: "13800138004", role: "水库值班员" },
   { id: "r-004", name: "李主任", phone: "13800138002", role: "调度主任" },
   { id: "r-005", name: "赵科长", phone: "13800138005", role: "防汛科长" },
+];
+
+export const smsTemplates: SmsTemplate[] = [
+  {
+    id: "tpl-001",
+    name: "常规调度指令",
+    content: "【调度指令】{指令标题}：{水库名称} {执行时段} 执行，控制目标：{控制目标}。请按时执行并反馈。",
+    variables: ["指令标题", "水库名称", "执行时段", "控制目标"],
+  },
+  {
+    id: "tpl-002",
+    name: "紧急泄洪通知",
+    content: "【紧急通知】{指令标题}：{水库名称} 即将加大泄洪至{泄流量}m³/s，请下游注意安全。",
+    variables: ["指令标题", "水库名称", "泄流量"],
+  },
+  {
+    id: "tpl-003",
+    name: "执行提醒",
+    content: "【提醒】{指令标题} 要求在{截止时间}前完成，请{执行人}抓紧执行并反馈。",
+    variables: ["指令标题", "截止时间", "执行人"],
+  },
+];
+
+export const schemeVersions: SchemeVersion[] = [
+  {
+    id: "version-001",
+    schemeId: "scheme-001",
+    versionNumber: 1,
+    name: "v1 - 初始方案",
+    createTime: "2024-06-05 10:00:00",
+    creator: "张调度",
+    description: "基础泄流量方案，根据历史数据制定的初始调度参数",
+    reservoirOperations: [
+      {
+        reservoirId: "res-001",
+        reservoirName: "清江水库",
+        targetLevel: 198.0,
+        discharge: 400,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+      {
+        reservoirId: "res-002",
+        reservoirName: "丹江口水库",
+        targetLevel: 160.0,
+        discharge: 700,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+      {
+        reservoirId: "res-003",
+        reservoirName: "三峡水库",
+        targetLevel: 155.0,
+        discharge: 10000,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+    ],
+  },
+  {
+    id: "version-002",
+    schemeId: "scheme-001",
+    versionNumber: 2,
+    name: "v2 - 增加泄流量",
+    createTime: "2024-06-05 12:30:00",
+    creator: "李调度",
+    description: "根据最新降雨预报，加大各水库泄流量，提前腾出库容",
+    reservoirOperations: [
+      {
+        reservoirId: "res-001",
+        reservoirName: "清江水库",
+        targetLevel: 197.0,
+        discharge: 500,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+      {
+        reservoirId: "res-002",
+        reservoirName: "丹江口水库",
+        targetLevel: 159.0,
+        discharge: 800,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+      {
+        reservoirId: "res-003",
+        reservoirName: "三峡水库",
+        targetLevel: 153.5,
+        discharge: 11000,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+    ],
+  },
+  {
+    id: "version-003",
+    schemeId: "scheme-001",
+    versionNumber: 3,
+    name: "v3 - 调整目标水位",
+    createTime: "2024-06-05 15:30:00",
+    creator: "张调度",
+    description: "进一步下调目标水位，应对可能发生的特大洪水",
+    reservoirOperations: [
+      {
+        reservoirId: "res-001",
+        reservoirName: "清江水库",
+        targetLevel: 196.0,
+        discharge: 600,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+      {
+        reservoirId: "res-002",
+        reservoirName: "丹江口水库",
+        targetLevel: 158.0,
+        discharge: 900,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+      {
+        reservoirId: "res-003",
+        reservoirName: "三峡水库",
+        targetLevel: 152.0,
+        discharge: 12000,
+        startTime: "2024-06-06 08:00:00",
+        endTime: "2024-06-07 20:00:00",
+      },
+    ],
+  },
 ];

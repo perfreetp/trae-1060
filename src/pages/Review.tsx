@@ -27,7 +27,7 @@ import {
   historicalFloods,
   reviewScores,
 } from "../data/review";
-import { formatDate, formatTime } from "../utils/format";
+import { formatDate, formatTime, formatDateForFilename } from "../utils/format";
 import { useAppStore } from "../store/useAppStore";
 import { exportChartAsImage, exportTableAsCSV } from "../utils/export";
 import type { ChartRef } from "../components/Charts/LineChart";
@@ -57,8 +57,19 @@ export default function Review() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showShiftModal, setShowShiftModal] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [selectedShift, setSelectedShift] = useState<string | null>(null);
   const [issueFilter, setIssueFilter] = useState<"all" | "open" | "processing" | "closed">("all");
+  const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
+
+  const [checklist, setChecklist] = useState({
+    rainfallChecked: false,
+    waterLevelChecked: false,
+    storageChecked: false,
+    commandsChecked: false,
+    risksChecked: false,
+  });
 
   const [issueForm, setIssueForm] = useState<IssueFormData>({
     title: "",
@@ -70,7 +81,9 @@ export default function Review() {
   const [shiftForm, setShiftForm] = useState<ShiftHandoverFormData>({
     shiftType: "day",
     incomingPerson: "",
-    waterSummary: "",
+    rainfallSummary: "",
+    waterLevelSummary: "",
+    storageSummary: "",
     pendingCommands: "",
     riskPoints: "",
     notes: "",
@@ -164,8 +177,8 @@ export default function Review() {
   };
 
   const handleAddShift = () => {
-    if (!shiftForm.incomingPerson || !shiftForm.waterSummary) {
-      alert("请填写必填信息");
+    if (!shiftForm.incomingPerson) {
+      alert("请选择接班人");
       return;
     }
     addShiftHandover(shiftForm, currentUser.name);
@@ -173,30 +186,95 @@ export default function Review() {
     setShiftForm({
       shiftType: "day",
       incomingPerson: "",
-      waterSummary: "",
+      rainfallSummary: "",
+      waterLevelSummary: "",
+      storageSummary: "",
       pendingCommands: "",
       riskPoints: "",
       notes: "",
     });
   };
 
+  const handleConfirmShift = () => {
+    if (!selectedShift) return;
+    const allChecked =
+      checklist.rainfallChecked &&
+      checklist.waterLevelChecked &&
+      checklist.storageChecked &&
+      checklist.commandsChecked &&
+      checklist.risksChecked;
+    if (!allChecked) {
+      alert("请完成全部核对项");
+      return;
+    }
+    confirmShiftHandover(selectedShift, checklist);
+    setShowConfirmModal(false);
+    setSelectedShift(null);
+    setChecklist({
+      rainfallChecked: false,
+      waterLevelChecked: false,
+      storageChecked: false,
+      commandsChecked: false,
+      risksChecked: false,
+    });
+  };
+
+  const openConfirmModal = (shiftId: string) => {
+    setSelectedShift(shiftId);
+    setChecklist({
+      rainfallChecked: false,
+      waterLevelChecked: false,
+      storageChecked: false,
+      commandsChecked: false,
+      risksChecked: false,
+    });
+    setShowConfirmModal(true);
+  };
+
+  const allChecklistChecked =
+    checklist.rainfallChecked &&
+    checklist.waterLevelChecked &&
+    checklist.storageChecked &&
+    checklist.commandsChecked &&
+    checklist.risksChecked;
+
   const handleExportRadar = () => {
     const flood = historicalFloods.find((f) => f.id === selectedScoreFloodId);
-    exportChartAsImage(
-      radarChartRef.current,
-      "复盘评估",
-      flood?.name || "复盘评分",
-      "评分雷达图"
-    );
+    const score = reviewScores.find((s) => s.floodId === selectedScoreFloodId);
+    if (flood && score) {
+      const floodName = flood.name.replace(/\s+/g, "_");
+      const reviewDate = formatDateForFilename(score.reviewTime);
+      const totalScore = Math.round(score.totalScore);
+      const filename = `${floodName}_复盘评分_${reviewDate}_综合${totalScore}分.png`;
+      exportChartAsImage(
+        radarChartRef.current,
+        "复盘评估",
+        flood.name,
+        "评分雷达图",
+        filename
+      );
+    } else {
+      exportChartAsImage(
+        radarChartRef.current,
+        "复盘评估",
+        flood?.name || "复盘评分",
+        "评分雷达图"
+      );
+    }
   };
 
   const handleExportRainfallWaterChart = () => {
+    const floodName = selectedFlood.name.replace(/\s+/g, "_");
+    const startDate = formatDateForFilename(selectedFlood.startTime);
+    const endDate = formatDateForFilename(selectedFlood.endTime);
+    const filename = `${floodName}_${startDate}_${endDate}_雨情水情曲线.png`;
     const timeRange = `${formatDate(selectedFlood.startTime)}-${formatDate(selectedFlood.endTime)}`;
     exportChartAsImage(
       dualAxisChartRef.current,
       selectedFlood.name,
       "雨情水情曲线",
-      timeRange
+      timeRange,
+      filename
     );
   };
 
@@ -208,7 +286,11 @@ export default function Review() {
       cmd.action,
       cmd.detail,
     ]);
-    exportTableAsCSV(headers, rows, selectedFlood.name, "调度指令时间线", "");
+    const floodName = selectedFlood.name.replace(/\s+/g, "_");
+    const startDate = formatDateForFilename(selectedFlood.startTime);
+    const endDate = formatDateForFilename(selectedFlood.endTime);
+    const filename = `${floodName}_${startDate}_${endDate}_调度指令时间线.csv`;
+    exportTableAsCSV(headers, rows, selectedFlood.name, "调度指令时间线", "", filename);
   };
 
   const handleExportRelatedIssuesCSV = () => {
@@ -787,7 +869,9 @@ export default function Review() {
                 setShiftForm({
                   shiftType: "day",
                   incomingPerson: "",
-                  waterSummary: "",
+                  rainfallSummary: "",
+                  waterLevelSummary: "",
+                  storageSummary: "",
                   pendingCommands: "",
                   riskPoints: "",
                   notes: "",
@@ -804,11 +888,14 @@ export default function Review() {
             {shiftHandovers.map((shift) => (
               <div
                 key={shift.id}
-                className={`data-card ${
+                className={`data-card cursor-pointer transition-all ${
                   shift.status === "pending_confirm"
                     ? "border-yellow-400 border-2 bg-yellow-50"
                     : ""
                 }`}
+                onClick={() =>
+                  setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)
+                }
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -830,15 +917,22 @@ export default function Review() {
                       </p>
                     </div>
                   </div>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      shift.status === "pending_confirm"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : "bg-green-100 text-green-800"
-                    }`}
-                  >
-                    {shift.status === "pending_confirm" ? "待确认" : "已交接"}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        shift.status === "pending_confirm"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-green-100 text-green-800"
+                      }`}
+                    >
+                      {shift.status === "pending_confirm" ? "待确认" : "已交接"}
+                    </span>
+                    {expandedShiftId === shift.id ? (
+                      <ChevronDown className="w-5 h-5 text-gray-400" />
+                    ) : (
+                      <ChevronRight className="w-5 h-5 text-gray-400" />
+                    )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <div className="flex items-center gap-2 text-sm">
@@ -859,24 +953,139 @@ export default function Review() {
                     </div>
                   )}
                 </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-3 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500 mb-1">重点事项</p>
-                    <p className="text-sm text-gray-700">{shift.keyPoints}</p>
+
+                {expandedShiftId === shift.id && (
+                  <div className="space-y-4 border-t border-gray-100 pt-4">
+                    {shift.rainfallSummary && (
+                      <div className="p-3 bg-blue-50 rounded-lg">
+                        <p className="text-xs font-medium text-blue-700 mb-1">雨情摘要</p>
+                        <p className="text-sm text-gray-700">{shift.rainfallSummary}</p>
+                      </div>
+                    )}
+                    {shift.waterLevelSummary && (
+                      <div className="p-3 bg-cyan-50 rounded-lg">
+                        <p className="text-xs font-medium text-cyan-700 mb-1">水情摘要</p>
+                        <p className="text-sm text-gray-700">{shift.waterLevelSummary}</p>
+                      </div>
+                    )}
+                    {shift.storageSummary && (
+                      <div className="p-3 bg-green-50 rounded-lg">
+                        <p className="text-xs font-medium text-green-700 mb-1">库情摘要</p>
+                        <p className="text-sm text-gray-700">{shift.storageSummary}</p>
+                      </div>
+                    )}
+                    <div className="p-3 bg-orange-50 rounded-lg">
+                      <p className="text-xs font-medium text-orange-700 mb-1">未完成指令</p>
+                      <p className="text-sm text-gray-700">{shift.pendingTasks.split("；风险点：")[0].replace("未完成指令：", "")}</p>
+                    </div>
+                    <div className="p-3 bg-red-50 rounded-lg">
+                      <p className="text-xs font-medium text-red-700 mb-1">风险点关注事项</p>
+                      <p className="text-sm text-gray-700">{shift.pendingTasks.split("；风险点：")[1] || "无"}</p>
+                    </div>
+                    {shift.remarks && (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <p className="text-xs font-medium text-gray-700 mb-1">下一班注意事项</p>
+                        <p className="text-sm text-gray-700">{shift.remarks}</p>
+                      </div>
+                    )}
+
+                    {shift.checklist && (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <p className="text-xs font-medium text-gray-700 mb-2">核对清单确认状态</p>
+                        <div className="grid grid-cols-1 gap-2">
+                          <div className="flex items-center gap-2 text-sm">
+                            {shift.checklist.rainfallChecked ? (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-gray-300" />
+                            )}
+                            <span
+                              className={
+                                shift.checklist.rainfallChecked
+                                  ? "text-green-700"
+                                  : "text-gray-400"
+                              }
+                            >
+                              雨情信息已核实
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            {shift.checklist.waterLevelChecked ? (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-gray-300" />
+                            )}
+                            <span
+                              className={
+                                shift.checklist.waterLevelChecked
+                                  ? "text-green-700"
+                                  : "text-gray-400"
+                              }
+                            >
+                              水情信息已核实
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            {shift.checklist.storageChecked ? (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-gray-300" />
+                            )}
+                            <span
+                              className={
+                                shift.checklist.storageChecked
+                                  ? "text-green-700"
+                                  : "text-gray-400"
+                              }
+                            >
+                              库情信息已核实
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            {shift.checklist.commandsChecked ? (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-gray-300" />
+                            )}
+                            <span
+                              className={
+                                shift.checklist.commandsChecked
+                                  ? "text-green-700"
+                                  : "text-gray-400"
+                              }
+                            >
+                              未完成指令已清楚
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            {shift.checklist.risksChecked ? (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-gray-300" />
+                            )}
+                            <span
+                              className={
+                                shift.checklist.risksChecked
+                                  ? "text-green-700"
+                                  : "text-gray-400"
+                              }
+                            >
+                              风险点注意事项已了解
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="p-3 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500 mb-1">待办事项</p>
-                    <p className="text-sm text-gray-700">{shift.pendingTasks}</p>
-                  </div>
-                  <div className="p-3 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500 mb-1">备注</p>
-                    <p className="text-sm text-gray-700">{shift.remarks}</p>
-                  </div>
-                </div>
+                )}
+
                 {shift.status === "pending_confirm" && (
                   <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
                     <button
-                      onClick={() => confirmShiftHandover(shift.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openConfirmModal(shift.id);
+                      }}
                       className="btn-primary flex items-center gap-2 text-sm py-2"
                     >
                       <CheckCircle2 className="w-4 h-4" />
@@ -1113,7 +1322,7 @@ export default function Review() {
 
       {showShiftModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-[600px] max-h-[90vh] overflow-y-auto animate-slide-up">
+          <div className="bg-white rounded-xl p-6 w-[700px] max-h-[90vh] overflow-y-auto animate-slide-up">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-800">新建交接</h3>
               <button
@@ -1125,63 +1334,83 @@ export default function Review() {
             </div>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-600 mb-2">班次类型</label>
-                <div className="flex gap-2">
-                  {[
-                    { key: "day", label: "白班", color: "yellow" },
-                    { key: "night", label: "夜班", color: "indigo" },
-                  ].map((shift) => (
-                    <label
-                      key={shift.key}
-                      className={`flex items-center gap-2 px-6 py-2 rounded-lg cursor-pointer transition-colors ${
-                        shiftForm.shiftType === shift.key
-                          ? shift.color === "yellow"
-                            ? "bg-yellow-100 text-yellow-700 border border-yellow-300"
-                            : "bg-indigo-100 text-indigo-700 border border-indigo-300"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="shiftType"
-                        checked={shiftForm.shiftType === shift.key}
-                        onChange={() => setShiftForm({ ...shiftForm, shiftType: shift.key as any })}
-                        className="hidden"
-                      />
-                      {shift.label}
-                    </label>
-                  ))}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-2">班次类型</label>
+                  <div className="flex gap-2">
+                    {[
+                      { key: "day", label: "白班", color: "yellow" },
+                      { key: "night", label: "夜班", color: "indigo" },
+                    ].map((shift) => (
+                      <label
+                        key={shift.key}
+                        className={`flex items-center gap-2 px-6 py-2 rounded-lg cursor-pointer transition-colors ${
+                          shiftForm.shiftType === shift.key
+                            ? shift.color === "yellow"
+                              ? "bg-yellow-100 text-yellow-700 border border-yellow-300"
+                              : "bg-indigo-100 text-indigo-700 border border-indigo-300"
+                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="shiftType"
+                          checked={shiftForm.shiftType === shift.key}
+                          onChange={() => setShiftForm({ ...shiftForm, shiftType: shift.key as any })}
+                          className="hidden"
+                        />
+                        {shift.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-600 mb-2">
+                    接班人 <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={shiftForm.incomingPerson}
+                    onChange={(e) => setShiftForm({ ...shiftForm, incomingPerson: e.target.value })}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="">请选择接班人</option>
+                    {receivers.map((rec) => (
+                      <option key={rec.id} value={rec.name}>
+                        {rec.name} ({rec.role})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-600 mb-2">
-                  接班人 <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={shiftForm.incomingPerson}
-                  onChange={(e) => setShiftForm({ ...shiftForm, incomingPerson: e.target.value })}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                >
-                  <option value="">请选择接班人</option>
-                  {receivers.map((rec) => (
-                    <option key={rec.id} value={rec.name}>
-                      {rec.name} ({rec.role})
-                    </option>
-                  ))}
-                </select>
+                <label className="block text-sm text-gray-600 mb-2">雨情摘要</label>
+                <textarea
+                  value={shiftForm.rainfallSummary}
+                  onChange={(e) => setShiftForm({ ...shiftForm, rainfallSummary: e.target.value })}
+                  className="w-full h-20 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="当前降雨情况、超警站点、未来趋势..."
+                />
               </div>
 
               <div>
-                <label className="block text-sm text-gray-600 mb-2">
-                  当前水情摘要 <span className="text-red-500">*</span>
-                </label>
+                <label className="block text-sm text-gray-600 mb-2">水情摘要</label>
                 <textarea
-                  value={shiftForm.waterSummary}
-                  onChange={(e) => setShiftForm({ ...shiftForm, waterSummary: e.target.value })}
+                  value={shiftForm.waterLevelSummary}
+                  onChange={(e) => setShiftForm({ ...shiftForm, waterLevelSummary: e.target.value })}
                   className="w-full h-20 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="请描述当前水情状况..."
+                  placeholder="河道水位、超警断面、变化趋势..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-600 mb-2">库情摘要</label>
+                <textarea
+                  value={shiftForm.storageSummary}
+                  onChange={(e) => setShiftForm({ ...shiftForm, storageSummary: e.target.value })}
+                  className="w-full h-20 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="各水库水位、库容、泄流情况..."
                 />
               </div>
 
@@ -1196,7 +1425,7 @@ export default function Review() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-600 mb-2">重点风险点</label>
+                <label className="block text-sm text-gray-600 mb-2">风险点关注事项</label>
                 <textarea
                   value={shiftForm.riskPoints}
                   onChange={(e) => setShiftForm({ ...shiftForm, riskPoints: e.target.value })}
@@ -1222,6 +1451,120 @@ export default function Review() {
               </button>
               <button onClick={handleAddShift} className="btn-primary">
                 创建交接
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConfirmModal && selectedShift && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-[500px] animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">确认交接</h3>
+              <button
+                onClick={() => {
+                  setShowConfirmModal(false);
+                  setSelectedShift(null);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              请仔细核对以下信息，确认无误后勾选全部选项：
+            </p>
+
+            <div className="space-y-3 mb-6">
+              <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={checklist.rainfallChecked}
+                  onChange={(e) =>
+                    setChecklist({ ...checklist, rainfallChecked: e.target.checked })
+                  }
+                  className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">雨情信息已核实</span>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={checklist.waterLevelChecked}
+                  onChange={(e) =>
+                    setChecklist({ ...checklist, waterLevelChecked: e.target.checked })
+                  }
+                  className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">水情信息已核实</span>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={checklist.storageChecked}
+                  onChange={(e) =>
+                    setChecklist({ ...checklist, storageChecked: e.target.checked })
+                  }
+                  className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">库情信息已核实</span>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={checklist.commandsChecked}
+                  onChange={(e) =>
+                    setChecklist({ ...checklist, commandsChecked: e.target.checked })
+                  }
+                  className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">未完成指令已清楚</span>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={checklist.risksChecked}
+                  onChange={(e) =>
+                    setChecklist({ ...checklist, risksChecked: e.target.checked })
+                  }
+                  className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">风险点注意事项已了解</span>
+              </label>
+            </div>
+
+            {!allChecklistChecked && (
+              <p className="text-xs text-orange-600 mb-4 flex items-center gap-1">
+                <AlertCircle className="w-4 h-4" />
+                请完成全部核对项
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowConfirmModal(false);
+                  setSelectedShift(null);
+                }}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmShift}
+                disabled={!allChecklistChecked}
+                className={`btn-primary flex items-center gap-2 ${
+                  !allChecklistChecked ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                确认交接
               </button>
             </div>
           </div>

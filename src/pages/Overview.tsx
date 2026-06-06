@@ -58,6 +58,30 @@ interface ComparisonData {
   };
 }
 
+interface RankItem {
+  id: string;
+  name: string;
+  value: number;
+  diff: number;
+  percent?: number;
+  unit: string;
+  trend: "up" | "down";
+}
+
+interface RiskChange {
+  id: string;
+  name: string;
+  type: "new" | "resolved";
+  description: string;
+}
+
+interface DetailData {
+  rainfallRank: RankItem[];
+  waterLevelRank: RankItem[];
+  storageRank: RankItem[];
+  riskChanges: RiskChange[];
+}
+
 const generateMockData = (
   baseRange: TimeRange,
   compareRange: TimeRange
@@ -126,6 +150,101 @@ const generateMockData = (
   };
 };
 
+const generateDetailData = (
+  baseRange: TimeRange,
+  compareRange: TimeRange
+): DetailData => {
+  const rangeFactors: Record<TimeRange, number> = {
+    "6h": 1,
+    "24h": 4,
+    "3d": 12,
+    "7d": 28,
+  };
+
+  const factorRatio = rangeFactors[compareRange] / rangeFactors[baseRange];
+
+  const rainfallRank = rainfallStations
+    .map((station) => {
+      const baseRain = station.dailyRain * (1 / factorRatio) * (0.8 + Math.random() * 0.4);
+      const compareRain = station.dailyRain * (0.9 + Math.random() * 0.3);
+      const diff = compareRain - baseRain;
+      const percent = baseRain > 0 ? (diff / baseRain) * 100 : 0;
+      return {
+        id: station.id,
+        name: station.name,
+        value: compareRain,
+        diff,
+        percent,
+        unit: "mm",
+        trend: (diff >= 0 ? "up" : "down") as "up" | "down",
+      };
+    })
+    .sort((a, b) => (b.percent || 0) - (a.percent || 0))
+    .slice(0, 3);
+
+  const waterLevelRank = riverStations
+    .map((station) => {
+      const baseLevel = station.currentLevel - (0.2 + Math.random() * 0.8);
+      const compareLevel = station.currentLevel;
+      const diff = compareLevel - baseLevel;
+      return {
+        id: station.id,
+        name: station.name,
+        value: compareLevel,
+        diff,
+        unit: "m",
+        trend: (diff >= 0 ? "up" : "down") as "up" | "down",
+      };
+    })
+    .sort((a, b) => b.diff - a.diff)
+    .slice(0, 3);
+
+  const storageRank = reservoirs
+    .map((reservoir) => {
+      const baseStorage = reservoir.currentStorage * (0.95 + Math.random() * 0.08);
+      const compareStorage = reservoir.currentStorage;
+      const diff = (compareStorage - baseStorage) / 10000;
+      return {
+        id: reservoir.id,
+        name: reservoir.name,
+        value: compareStorage / 10000,
+        diff,
+        unit: "亿m³",
+        trend: (diff >= 0 ? "up" : "down") as "up" | "down",
+      };
+    })
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
+    .slice(0, 3);
+
+  const riskChanges: RiskChange[] = [
+    {
+      id: "risk-new-001",
+      name: "襄阳雨量站超警",
+      type: "new",
+      description: "降雨量超过警戒值50mm",
+    },
+    {
+      id: "risk-new-002",
+      name: "沙市水位接近警戒",
+      type: "new",
+      description: "水位41.8m，距警戒值1.2m",
+    },
+    {
+      id: "risk-resolved-001",
+      name: "荆门雨量站解除预警",
+      type: "resolved",
+      description: "降雨量回落至正常范围",
+    },
+  ];
+
+  return {
+    rainfallRank,
+    waterLevelRank,
+    storageRank,
+    riskChanges,
+  };
+};
+
 const generateChartData = (range: TimeRange) => {
   const dataPoints: Record<TimeRange, number> = {
     "6h": 6,
@@ -166,6 +285,7 @@ export default function Overview() {
   const [compareTimeRange, setCompareTimeRange] = useState<TimeRange>("6h");
 
   const comparisonData = generateMockData(baseTimeRange, compareTimeRange);
+  const detailData = generateDetailData(baseTimeRange, compareTimeRange);
   const chartData = generateChartData(compareTimeRange);
 
   const totalRainfall = rainfallStations.reduce(
@@ -200,6 +320,19 @@ export default function Overview() {
         return <ArrowDown className="w-5 h-5" />;
       default:
         return <Minus className="w-5 h-5" />;
+    }
+  };
+
+  const getRankBadgeColor = (index: number) => {
+    switch (index) {
+      case 0:
+        return "bg-red-500 text-white";
+      case 1:
+        return "bg-orange-500 text-white";
+      case 2:
+        return "bg-yellow-500 text-white";
+      default:
+        return "bg-gray-300 text-gray-700";
     }
   };
 
@@ -310,6 +443,155 @@ export default function Overview() {
     </div>
   );
 
+  const RankCard = ({
+    title,
+    icon,
+    iconBg,
+    iconColor,
+    data,
+    showPercent,
+    onItemClick,
+  }: {
+    title: string;
+    icon: React.ReactNode;
+    iconBg: string;
+    iconColor: string;
+    data: RankItem[];
+    showPercent?: boolean;
+    onItemClick: (item: RankItem) => void;
+  }) => (
+    <div className="data-card hover:shadow-lg transition-all duration-300">
+      <div className="flex items-center gap-3 mb-4">
+        <div className={`p-2 rounded-lg ${iconBg} ${iconColor}`}>
+          {icon}
+        </div>
+        <h4 className="font-medium text-gray-800">{title}</h4>
+      </div>
+      <div className="space-y-3">
+        {data.map((item, index) => (
+          <div
+            key={item.id}
+            onClick={() => onItemClick(item)}
+            className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer group transition-colors"
+          >
+            <span
+              className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${getRankBadgeColor(index)}`}
+            >
+              #{index + 1}
+            </span>
+            <span className="flex-1 text-sm text-gray-700 group-hover:underline group-hover:text-primary-600 transition-colors">
+              {item.name}
+            </span>
+            <span
+              className={`flex items-center gap-1 text-sm font-medium ${
+                item.trend === "up" ? "text-red-500" : "text-green-500"
+              }`}
+            >
+              {item.trend === "up" ? (
+                <ArrowUp className="w-4 h-4" />
+              ) : (
+                <ArrowDown className="w-4 h-4" />
+              )}
+              {showPercent && item.percent !== undefined
+                ? `${formatNumber(item.percent, 1)}%`
+                : `${item.diff > 0 ? "+" : ""}${formatNumber(item.diff, 2)}${
+                    item.unit
+                  }`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const RiskChangeCard = ({
+    data,
+    onItemClick,
+  }: {
+    data: RiskChange[];
+    onItemClick: (item: RiskChange) => void;
+  }) => {
+    const newRisks = data.filter((d) => d.type === "new");
+    const resolvedRisks = data.filter((d) => d.type === "resolved");
+
+    return (
+      <div className="data-card hover:shadow-lg transition-all duration-300">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-red-50 text-red-600">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <h4 className="font-medium text-gray-800">风险点变化追踪</h4>
+        </div>
+        <div className="space-y-4">
+          {newRisks.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-500 mb-2 font-medium">新增风险点</p>
+              <div className="space-y-2">
+                {newRisks.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => onItemClick(item)}
+                    className="flex items-start gap-2 p-2 rounded-lg hover:bg-red-50 cursor-pointer group transition-colors"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5 flex-shrink-0"></span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-700 group-hover:underline group-hover:text-red-600 transition-colors">
+                        {item.name}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">
+                        {item.description}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {resolvedRisks.length > 0 && (
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-500 mb-2 font-medium">解除风险点</p>
+              <div className="space-y-2">
+                {resolvedRisks.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => onItemClick(item)}
+                    className="flex items-start gap-2 p-2 rounded-lg hover:bg-green-50 cursor-pointer group transition-colors"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-green-500 mt-1.5 flex-shrink-0"></span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-700 group-hover:underline group-hover:text-green-600 transition-colors">
+                        {item.name}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">
+                        {item.description}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const handleRainfallClick = (item: RankItem) => {
+    navigate(`/rainfall?highlight=${item.id}`);
+  };
+
+  const handleWaterLevelClick = (item: RankItem) => {
+    navigate(`/river?highlight=${item.id}`);
+  };
+
+  const handleStorageClick = (item: RankItem) => {
+    navigate(`/reservoir/${item.id}`);
+  };
+
+  const handleRiskClick = (item: RiskChange) => {
+    navigate(`/scheme?highlight=${item.id}&type=${item.type}`);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -374,7 +656,7 @@ export default function Overview() {
         <div className="flex items-center justify-between mb-6">
           <h3 className="font-semibold text-gray-800 flex items-center gap-2">
             <span className="w-1 h-5 bg-primary-500 rounded-full"></span>
-            态势对比
+            变化追踪
           </h3>
           <div className="flex items-center gap-6">
             <TimeRangeSelect
@@ -391,7 +673,7 @@ export default function Overview() {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-4 gap-4 mb-6">
           <ComparisonCard
             title="雨量变化"
             icon={<CloudRain className="w-5 h-5" />}
@@ -435,6 +717,40 @@ export default function Overview() {
             trend={comparisonData.alerts.trend}
             showPercent={false}
             navigatePath="/scheme"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <RankCard
+            title="雨量增幅最大站点"
+            icon={<CloudRain className="w-5 h-5" />}
+            iconBg="bg-blue-50"
+            iconColor="text-blue-600"
+            data={detailData.rainfallRank}
+            showPercent={true}
+            onItemClick={handleRainfallClick}
+          />
+          <RankCard
+            title="水位涨幅最大断面"
+            icon={<Waves className="w-5 h-5" />}
+            iconBg="bg-cyan-50"
+            iconColor="text-cyan-600"
+            data={detailData.waterLevelRank}
+            showPercent={false}
+            onItemClick={handleWaterLevelClick}
+          />
+          <RankCard
+            title="库容变化最大水库"
+            icon={<Droplets className="w-5 h-5" />}
+            iconBg="bg-teal-50"
+            iconColor="text-teal-600"
+            data={detailData.storageRank}
+            showPercent={false}
+            onItemClick={handleStorageClick}
+          />
+          <RiskChangeCard
+            data={detailData.riskChanges}
+            onItemClick={handleRiskClick}
           />
         </div>
       </div>

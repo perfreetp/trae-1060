@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useState, useRef, useMemo, useEffect } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import {
   Droplets,
   ArrowDownToLine,
@@ -7,17 +7,22 @@ import {
   Gauge,
   FileText,
   Plus,
+  MapPin,
 } from "lucide-react";
 import DualAxisChart from "../components/Charts/DualAxisChart";
 import LineChart, { type ChartRef } from "../components/Charts/LineChart";
+import BasinMap from "../components/Map/BasinMap";
 import TimeRangeSelector from "../components/Common/TimeRangeSelector";
 import ExportButton from "../components/Common/ExportButton";
 import { reservoirs, forecasts } from "../data/reservoir";
 import { useAppStore } from "../store/useAppStore";
 import { formatNumber, formatTime } from "../utils/format";
+import { generateTimeLabels, getDataCount, generateRandomSeries } from "../utils/timeSeries";
+import type { TimeRange } from "../types";
 
 export default function Reservoir() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const reservoir = reservoirs.find((r) => r.id === id) || reservoirs[0];
   const forecast = forecasts.find((f) => f.reservoirId === reservoir.id);
   const [selectedTab, setSelectedTab] = useState<"info" | "discharge" | "forecast">("info");
@@ -26,7 +31,52 @@ export default function Reservoir() {
   const inflowChartRef = useRef<ChartRef>(null);
   const dischargeChartRef = useRef<ChartRef>(null);
   const forecastChartRef = useRef<ChartRef>(null);
-  const { timeRange } = useAppStore();
+  const { timeRange, setTimeRange } = useAppStore();
+
+  useEffect(() => {
+    const compareRange = searchParams.get("compareRange");
+    if (compareRange && ["6h", "24h", "3d", "7d"].includes(compareRange)) {
+      setTimeRange(compareRange as TimeRange);
+    }
+  }, [searchParams, setTimeRange]);
+
+  const timeLabels = generateTimeLabels(timeRange);
+  const dataCount = getDataCount(timeRange);
+
+  const timeSeriesData = useMemo(() => {
+    const levelSeries = generateRandomSeries(reservoir.currentLevel, 0.5, dataCount, "stable");
+    const storageSeries = generateRandomSeries(reservoir.currentStorage, reservoir.currentStorage * 0.08, dataCount, "stable");
+    const inflowSeries = generateRandomSeries(reservoir.inflow, reservoir.inflow * 0.3, dataCount, "stable");
+    const outflowSeries = generateRandomSeries(reservoir.outflow, reservoir.outflow * 0.25, dataCount, "stable");
+
+    const avgStorage = storageSeries.reduce((sum, val) => sum + val, 0) / storageSeries.length;
+    const maxLevel = Math.max(...levelSeries);
+    const minLevel = Math.min(...levelSeries);
+    const maxInflow = Math.max(...inflowSeries);
+    const avgOutflow = outflowSeries.reduce((sum, val) => sum + val, 0) / outflowSeries.length;
+
+    return {
+      levelSeries,
+      storageSeries,
+      inflowSeries,
+      outflowSeries,
+      avgStorage: Math.round(avgStorage * 100) / 100,
+      maxLevel: Math.round(maxLevel * 100) / 100,
+      minLevel: Math.round(minLevel * 100) / 100,
+      maxInflow: Math.round(maxInflow * 10) / 10,
+      avgOutflow: Math.round(avgOutflow * 10) / 10,
+    };
+  }, [reservoir, dataCount]);
+
+  const reservoirWithTimeRange = useMemo(() => {
+    return {
+      ...reservoir,
+      timeRangeData: {
+        avgStorage: timeSeriesData.avgStorage,
+        maxLevel: timeSeriesData.maxLevel,
+      },
+    };
+  }, [reservoir, timeSeriesData]);
 
   const storageLevels = reservoir.storageCurve.map((p) => p.level.toString());
   const storageValues = reservoir.storageCurve.map((p) => p.storage);
@@ -49,8 +99,16 @@ export default function Reservoir() {
   };
 
   const currentDischarge = getDischargeForOpening(opening);
-
   const storagePercent = (reservoir.currentStorage / reservoir.totalCapacity) * 100;
+  const avgStoragePercent = (timeSeriesData.avgStorage / reservoir.totalCapacity) * 100;
+
+  const inflowOutflowTableHeaders = ["时间", "入库流量 (m³/s)", "出库流量 (m³/s)", "净流量 (m³/s)"];
+  const inflowOutflowTableRows = timeLabels.map((label, i) => [
+    label,
+    formatNumber(timeSeriesData.inflowSeries[i]),
+    formatNumber(timeSeriesData.outflowSeries[i]),
+    formatNumber(timeSeriesData.inflowSeries[i] - timeSeriesData.outflowSeries[i]),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -77,6 +135,7 @@ export default function Reservoir() {
             pageName="水库调度"
             entityName={reservoir.name}
             timeRange={timeRange}
+            tableData={selectedTab === "forecast" ? { headers: inflowOutflowTableHeaders, rows: inflowOutflowTableRows } : undefined}
           />
         </div>
       </div>
@@ -94,7 +153,7 @@ export default function Reservoir() {
             <span className="text-sm text-gray-500">m</span>
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            汛限 {reservoir.floodLimitLevel}m / 正常 {reservoir.normalLevel}m
+            时段最高 {formatNumber(timeSeriesData.maxLevel)}m / 最低 {formatNumber(timeSeriesData.minLevel)}m
           </p>
         </div>
         <div className="data-card">
@@ -115,7 +174,7 @@ export default function Reservoir() {
             />
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            占总库容 {formatNumber(storagePercent, 1)}%
+            时段平均 {formatNumber(avgStoragePercent, 1)}% / 占总库容 {formatNumber(storagePercent, 1)}%
           </p>
         </div>
         <div className="data-card">
@@ -129,6 +188,9 @@ export default function Reservoir() {
             </span>
             <span className="text-sm text-gray-500">m³/s</span>
           </div>
+          <p className="text-xs text-gray-500 mt-1">
+            时段最大 {formatNumber(timeSeriesData.maxInflow)} m³/s
+          </p>
         </div>
         <div className="data-card">
           <div className="flex items-center gap-2 mb-2">
@@ -141,14 +203,25 @@ export default function Reservoir() {
             </span>
             <span className="text-sm text-gray-500">m³/s</span>
           </div>
+          <p className="text-xs text-gray-500 mt-1">
+            时段平均 {formatNumber(timeSeriesData.avgOutflow)} m³/s
+          </p>
         </div>
+      </div>
+
+      <div className="data-card">
+        <div className="flex items-center gap-2 mb-4">
+          <MapPin className="w-5 h-5 text-primary-500" />
+          <h3 className="font-semibold text-gray-800">库区分布</h3>
+        </div>
+        <BasinMap reservoirs={[reservoirWithTimeRange]} height="300px" />
       </div>
 
       <div className="flex gap-2 border-b border-gray-200">
         {[
-          { key: "info", label: "库容曲线" },
+          { key: "info", label: "库容水位曲线" },
           { key: "discharge", label: "泄流能力查询" },
-          { key: "forecast", label: "来水预报录入" },
+          { key: "forecast", label: "来水预报" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -184,17 +257,17 @@ export default function Reservoir() {
               data={[
                 {
                   name: "入库流量",
-                  values: [280, 300, 320, 310, 330, 350, 340],
+                  values: timeSeriesData.inflowSeries,
                   color: "#38B000",
                 },
                 {
                   name: "出库流量",
-                  values: [250, 260, 280, 280, 290, 300, 290],
+                  values: timeSeriesData.outflowSeries,
                   color: "#F77F00",
                 },
               ]}
-              xAxisData={["1日", "2日", "3日", "4日", "5日", "6日", "7日"]}
-              title="近7日出入库流量"
+              xAxisData={timeLabels}
+              title={`${timeRange}出入库流量`}
               yAxisName="m³/s"
               height={350}
             />
@@ -297,6 +370,32 @@ export default function Reservoir() {
                 <p>暂无来水预报数据</p>
               </div>
             )}
+          </div>
+
+          <div className="data-card">
+            <h3 className="font-semibold text-gray-800 mb-4">{timeRange}出入库流量明细</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr>
+                    {inflowOutflowTableHeaders.map((h) => (
+                      <th key={h} className="table-header">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {inflowOutflowTableRows.map((row, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      {row.map((cell, j) => (
+                        <td key={j} className={`table-cell ${j > 0 ? "font-mono" : ""}`}>
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

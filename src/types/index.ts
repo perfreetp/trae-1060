@@ -114,6 +114,18 @@ export interface Scheme {
   reservoirOperations: ReservoirOperation[];
   riskPoints: RiskPoint[];
   simulationResult: SimulationResult;
+  currentVersion?: number;
+}
+
+export interface SchemeVersion {
+  id: string;
+  schemeId: string;
+  versionNumber: number;
+  name: string;
+  createTime: string;
+  creator: string;
+  description: string;
+  reservoirOperations: ReservoirOperation[];
 }
 
 export interface Command {
@@ -123,12 +135,18 @@ export interface Command {
   createTime: string;
   creator: string;
   executor: string;
-  status: "pending" | "executing" | "completed" | "cancelled";
+  status: "draft" | "pending_approval" | "approved" | "rejected" | "pending" | "executing" | "completed" | "cancelled";
   executeTime?: string;
   completeTime?: string;
   feedback?: string;
   smsSent: boolean;
   schemeId?: string;
+  approvalTime?: string;
+  approver?: string;
+  rejectReason?: string;
+  confirmTime?: string;
+  confirmer?: string;
+  smsTemplateId?: string;
 }
 
 export interface DispatchLog {
@@ -187,6 +205,10 @@ export interface ShiftHandover {
   remarks: string;
   status: "pending_confirm" | "confirmed";
   confirmTime?: string;
+  checklist?: Record<string, boolean>;
+  rainfallSummary?: string;
+  waterLevelSummary?: string;
+  storageSummary?: string;
 }
 
 export interface AlertItem {
@@ -243,7 +265,9 @@ export interface IssueFormData {
 export interface ShiftHandoverFormData {
   shiftType: "day" | "night";
   incomingPerson: string;
-  waterSummary: string;
+  rainfallSummary: string;
+  waterLevelSummary: string;
+  storageSummary: string;
   pendingCommands: string;
   riskPoints: string;
   notes: string;
@@ -266,4 +290,11 @@ export interface ReservoirSimulationState {
   discharge: number;
   startTime: string;
   endTime: string;
+}
+
+export interface SmsTemplate {
+  id: string;
+  name: string;
+  content: string;
+  variables: string[];
 }

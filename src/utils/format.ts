@@ -19,12 +19,14 @@ export const formatDate = (dateStr: string) => {
 
 export const getStatusColor = (status: string) => {
   const colors: Record<string, string> = {
+    draft: "bg-gray-100 text-gray-800",
+    pending_approval: "bg-purple-100 text-purple-800",
+    approved: "bg-green-100 text-green-800",
+    rejected: "bg-red-100 text-red-800",
     pending: "bg-yellow-100 text-yellow-800",
     executing: "bg-blue-100 text-blue-800",
     completed: "bg-green-100 text-green-800",
     cancelled: "bg-gray-100 text-gray-800",
-    draft: "bg-gray-100 text-gray-800",
-    approved: "bg-green-100 text-green-800",
     executed: "bg-blue-100 text-blue-800",
     open: "bg-red-100 text-red-800",
     processing: "bg-yellow-100 text-yellow-800",
@@ -35,12 +37,14 @@ export const getStatusColor = (status: string) => {
 
 export const getStatusText = (status: string) => {
   const texts: Record<string, string> = {
+    draft: "草稿",
+    pending_approval: "待审核",
+    approved: "已审核",
+    rejected: "已退回",
     pending: "待执行",
     executing: "执行中",
     completed: "已完成",
     cancelled: "已取消",
-    draft: "草案",
-    approved: "已审批",
     executed: "已执行",
     open: "待处理",
     processing: "处理中",
@@ -75,4 +79,12 @@ export const getTrendColor = (trend: string) => {
   if (trend === "up") return "text-red-500";
   if (trend === "down") return "text-green-500";
   return "text-gray-500";
+};
+
+export const formatDateForFilename = (dateStr: string) => {
+  const date = new Date(dateStr);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
 };
