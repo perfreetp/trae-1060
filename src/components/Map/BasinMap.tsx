@@ -48,17 +48,27 @@ export default function BasinMap({
           mapInstance.current!
         );
         
-        const avgStorage = res.timeRangeData?.avgStorage ?? res.currentStorage;
-        const avgStorageYi = (avgStorage / 10000).toFixed(2);
-        
-        marker.bindPopup(`
+        let popupContent = `
           <div style="padding:4px;">
             <strong style="color:#0A2463;">${res.name}</strong><br/>
             <span style="font-size:12px;color:#666;">当前水位: ${res.currentLevel}m</span><br/>
-            <span style="font-size:12px;color:#666;">当前库容: ${res.currentStorage}万m³</span><br/>
-            ${res.timeRangeData ? `<span style="font-size:12px;color:#0A2463;font-weight:500;">时段平均库容: ${avgStorageYi}亿m³</span>` : ""}
-          </div>
-        `);
+        `;
+
+        if (res.timeRangeData) {
+          const avgStorageYi = (res.timeRangeData.avgStorage / 10000).toFixed(2);
+          popupContent += `
+            <span style="font-size:12px;color:#0A2463;font-weight:500;">时段最高水位: ${res.timeRangeData.maxLevel}m</span><br/>
+            <span style="font-size:12px;color:#0A2463;font-weight:500;">时段平均库容: ${avgStorageYi}亿m³</span>
+          `;
+        } else {
+          popupContent += `
+            <span style="font-size:12px;color:#666;">当前库容: ${res.currentStorage}万m³</span>
+          `;
+        }
+
+        popupContent += `</div>`;
+        
+        marker.bindPopup(popupContent);
         if (onReservoirClick) {
           marker.on("click", () => onReservoirClick(res));
         }

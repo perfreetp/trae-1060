@@ -56,6 +56,133 @@ const calculateOverlapHours = (
   return Math.max(0, (overlapEnd - overlapStart) / (1000 * 60 * 60));
 };
 
+const calculateSectionResults = (
+  operations: ReservoirSimulationState[],
+  STORAGE_COEFFICIENT: number,
+  DURATION_COEFFICIENT: number,
+  DISCHARGE_COEFFICIENT_BASE: number,
+  OVERLAY_COEFFICIENT: number
+) => {
+  return downstreamSections.map((section) => {
+    let predictedLevel = section.baseLevel;
+    let sectionAccumulation = 0;
+
+    operations.forEach((state) => {
+      const reservoir = reservoirs.find((r) => r.id === state.reservoirId);
+      if (!reservoir) return;
+
+      const coefficient = section.influenceCoefficients[state.reservoirId] || 0;
+      const dischargeInfluence = state.discharge * coefficient * DISCHARGE_COEFFICIENT_BASE;
+      predictedLevel += dischargeInfluence;
+
+      const targetLevelDiff = state.targetLevel - reservoir.floodLimitLevel;
+      const targetInfluence = targetLevelDiff * STORAGE_COEFFICIENT * coefficient * 10;
+      predictedLevel += targetInfluence;
+
+      const durationHours = calculateDurationHours(state.startTime, state.endTime);
+      const durationInfluence = durationHours * DURATION_COEFFICIENT * coefficient * 5;
+      predictedLevel += durationInfluence;
+      sectionAccumulation += durationHours * 0.3;
+    });
+
+    for (let i = 0; i < operations.length; i++) {
+      for (let j = i + 1; j < operations.length; j++) {
+        const overlap = calculateOverlapHours(
+          operations[i].startTime,
+          operations[i].endTime,
+          operations[j].startTime,
+          operations[j].endTime
+        );
+        const coeff1 = section.influenceCoefficients[operations[i].reservoirId] || 0;
+        const coeff2 = section.influenceCoefficients[operations[j].reservoirId] || 0;
+        const avgCoeff = (coeff1 + coeff2) / 2;
+        predictedLevel += overlap * OVERLAY_COEFFICIENT * avgCoeff * 2;
+        sectionAccumulation += overlap * 0.2;
+      }
+    }
+
+    let baseRiskLevel: "low" | "medium" | "high" = "low";
+    if (predictedLevel >= section.dangerLevel) {
+      baseRiskLevel = "high";
+    } else if (predictedLevel >= section.warningLevel) {
+      baseRiskLevel = "medium";
+    }
+
+    let finalRiskLevel = baseRiskLevel;
+    if (sectionAccumulation >= 30 && baseRiskLevel === "medium") {
+      finalRiskLevel = "high";
+    } else if (sectionAccumulation >= 15 && baseRiskLevel === "low") {
+      finalRiskLevel = "medium";
+    }
+
+    return {
+      ...section,
+      predictedLevel: Math.round(predictedLevel * 10) / 10,
+      riskLevel: finalRiskLevel,
+      baseRiskLevel,
+      sectionAccumulation: Math.round(sectionAccumulation * 10) / 10,
+    };
+  });
+};
+
+const calculateRiskPoints = (sectionResults: ReturnType<typeof calculateSectionResults>) => {
+  const points: RiskPoint[] = [];
+  sectionResults.forEach((section) => {
+    if (section.riskLevel === "low" && section.sectionAccumulation < 10) return;
+
+    let basePointCount = 0;
+    if (section.riskLevel === "high") {
+      basePointCount = 3;
+    } else if (section.riskLevel === "medium") {
+      basePointCount = 2;
+    } else {
+      basePointCount = 1;
+    }
+
+    let bonusPoints = 0;
+    if (section.sectionAccumulation >= 40) {
+      bonusPoints = 2;
+    } else if (section.sectionAccumulation >= 20) {
+      bonusPoints = 1;
+    }
+
+    const totalPoints = Math.min(basePointCount + bonusPoints, 5);
+    const isHighAccumulation = section.sectionAccumulation >= 20;
+
+    for (let i = 0; i < totalPoints; i++) {
+      const angle = (i / totalPoints) * Math.PI * 2;
+      const distance = 0.15 + i * 0.05;
+
+      let pointLevel: "high" | "medium" | "low" = section.riskLevel;
+      if (isHighAccumulation && i < bonusPoints && section.riskLevel !== "high") {
+        pointLevel = section.riskLevel === "medium" ? "high" : "medium";
+      }
+
+      let description = `${section.name}断面水位${section.predictedLevel}m`;
+      if (section.sectionAccumulation >= 20) {
+        description += `，执行时段累积风险较高`;
+      }
+      if (section.riskLevel === "high") {
+        description += "，超危险水位";
+      } else if (section.riskLevel === "medium") {
+        description += "，接近警戒水位";
+      } else {
+        description += "，存在累积风险";
+      }
+
+      points.push({
+        id: `rp-${section.id}-${i}`,
+        name: `${section.name}风险点${i + 1}`,
+        lat: section.lat + Math.sin(angle) * distance,
+        lng: section.lng + Math.cos(angle) * distance,
+        level: pointLevel,
+        description,
+      });
+    }
+  });
+  return points;
+};
+
 export default function Scheme() {
   const navigate = useNavigate();
   const { getCommandsBySchemeId, getVersionsBySchemeId, createVersion, rollbackToVersion, currentUser } = useAppStore();
@@ -168,66 +295,13 @@ export default function Scheme() {
   }, [simulationStates]);
 
   const sectionResults = useMemo(() => {
-    return downstreamSections.map((section) => {
-      let predictedLevel = section.baseLevel;
-      let sectionAccumulation = 0;
-
-      simulationStates.forEach((state) => {
-        const reservoir = reservoirs.find((r) => r.id === state.reservoirId);
-        if (!reservoir) return;
-
-        const coefficient = section.influenceCoefficients[state.reservoirId] || 0;
-        const dischargeInfluence = state.discharge * coefficient * DISCHARGE_COEFFICIENT_BASE;
-        predictedLevel += dischargeInfluence;
-
-        const targetLevelDiff = state.targetLevel - reservoir.floodLimitLevel;
-        const targetInfluence = targetLevelDiff * STORAGE_COEFFICIENT * coefficient * 10;
-        predictedLevel += targetInfluence;
-
-        const durationHours = calculateDurationHours(state.startTime, state.endTime);
-        const durationInfluence = durationHours * DURATION_COEFFICIENT * coefficient * 5;
-        predictedLevel += durationInfluence;
-        sectionAccumulation += durationHours * 0.3;
-      });
-
-      for (let i = 0; i < simulationStates.length; i++) {
-        for (let j = i + 1; j < simulationStates.length; j++) {
-          const overlap = calculateOverlapHours(
-            simulationStates[i].startTime,
-            simulationStates[i].endTime,
-            simulationStates[j].startTime,
-            simulationStates[j].endTime
-          );
-          const coeff1 = section.influenceCoefficients[simulationStates[i].reservoirId] || 0;
-          const coeff2 = section.influenceCoefficients[simulationStates[j].reservoirId] || 0;
-          const avgCoeff = (coeff1 + coeff2) / 2;
-          predictedLevel += overlap * OVERLAY_COEFFICIENT * avgCoeff * 2;
-          sectionAccumulation += overlap * 0.2;
-        }
-      }
-
-      let baseRiskLevel: "low" | "medium" | "high" = "low";
-      if (predictedLevel >= section.dangerLevel) {
-        baseRiskLevel = "high";
-      } else if (predictedLevel >= section.warningLevel) {
-        baseRiskLevel = "medium";
-      }
-
-      let finalRiskLevel = baseRiskLevel;
-      if (sectionAccumulation >= 30 && baseRiskLevel === "medium") {
-        finalRiskLevel = "high";
-      } else if (sectionAccumulation >= 15 && baseRiskLevel === "low") {
-        finalRiskLevel = "medium";
-      }
-
-      return {
-        ...section,
-        predictedLevel: Math.round(predictedLevel * 10) / 10,
-        riskLevel: finalRiskLevel,
-        baseRiskLevel,
-        sectionAccumulation: Math.round(sectionAccumulation * 10) / 10,
-      };
-    });
+    return calculateSectionResults(
+      simulationStates,
+      STORAGE_COEFFICIENT,
+      DURATION_COEFFICIENT,
+      DISCHARGE_COEFFICIENT_BASE,
+      OVERLAY_COEFFICIENT
+    );
   }, [simulationStates]);
 
   const overallRiskLevel = useMemo(() => {
@@ -242,61 +316,7 @@ export default function Scheme() {
   }, [sectionResults, riskAccumulation]);
 
   const riskPoints = useMemo(() => {
-    const points: RiskPoint[] = [];
-    sectionResults.forEach((section) => {
-      if (section.riskLevel === "low" && section.sectionAccumulation < 10) return;
-
-      let basePointCount = 0;
-      if (section.riskLevel === "high") {
-        basePointCount = 3;
-      } else if (section.riskLevel === "medium") {
-        basePointCount = 2;
-      } else {
-        basePointCount = 1;
-      }
-
-      let bonusPoints = 0;
-      if (section.sectionAccumulation >= 40) {
-        bonusPoints = 2;
-      } else if (section.sectionAccumulation >= 20) {
-        bonusPoints = 1;
-      }
-
-      const totalPoints = Math.min(basePointCount + bonusPoints, 5);
-      const isHighAccumulation = section.sectionAccumulation >= 20;
-
-      for (let i = 0; i < totalPoints; i++) {
-        const angle = (i / totalPoints) * Math.PI * 2;
-        const distance = 0.15 + i * 0.05;
-
-        let pointLevel: "high" | "medium" | "low" = section.riskLevel;
-        if (isHighAccumulation && i < bonusPoints && section.riskLevel !== "high") {
-          pointLevel = section.riskLevel === "medium" ? "high" : "medium";
-        }
-
-        let description = `${section.name}断面水位${section.predictedLevel}m`;
-        if (section.sectionAccumulation >= 20) {
-          description += `，执行时段累积风险较高`;
-        }
-        if (section.riskLevel === "high") {
-          description += "，超危险水位";
-        } else if (section.riskLevel === "medium") {
-          description += "，接近警戒水位";
-        } else {
-          description += "，存在累积风险";
-        }
-
-        points.push({
-          id: `rp-${section.id}-${i}`,
-          name: `${section.name}风险点${i + 1}`,
-          lat: section.lat + Math.sin(angle) * distance,
-          lng: section.lng + Math.cos(angle) * distance,
-          level: pointLevel,
-          description,
-        });
-      }
-    });
-    return points;
+    return calculateRiskPoints(sectionResults);
   }, [sectionResults]);
 
   const updateSimulationState = (
@@ -429,7 +449,74 @@ export default function Scheme() {
       };
     });
 
-    return { v1, v2, diffs };
+    const v1States: ReservoirSimulationState[] = v1.reservoirOperations.map(op => ({
+      reservoirId: op.reservoirId,
+      targetLevel: op.targetLevel,
+      discharge: op.discharge,
+      startTime: op.startTime,
+      endTime: op.endTime,
+    }));
+    const v2States: ReservoirSimulationState[] = v2.reservoirOperations.map(op => ({
+      reservoirId: op.reservoirId,
+      targetLevel: op.targetLevel,
+      discharge: op.discharge,
+      startTime: op.startTime,
+      endTime: op.endTime,
+    }));
+
+    const v1SectionResults = calculateSectionResults(
+      v1States,
+      STORAGE_COEFFICIENT,
+      DURATION_COEFFICIENT,
+      DISCHARGE_COEFFICIENT_BASE,
+      OVERLAY_COEFFICIENT
+    );
+    const v2SectionResults = calculateSectionResults(
+      v2States,
+      STORAGE_COEFFICIENT,
+      DURATION_COEFFICIENT,
+      DISCHARGE_COEFFICIENT_BASE,
+      OVERLAY_COEFFICIENT
+    );
+
+    const sectionDiffs = downstreamSections.map(section => {
+      const s1 = v1SectionResults.find(s => s.id === section.id);
+      const s2 = v2SectionResults.find(s => s.id === section.id);
+      const levelDiff = (s2?.predictedLevel || 0) - (s1?.predictedLevel || 0);
+      return {
+        sectionId: section.id,
+        sectionName: section.name,
+        v1PredictedLevel: s1?.predictedLevel || 0,
+        v2PredictedLevel: s2?.predictedLevel || 0,
+        levelDiff,
+        v1RiskLevel: s1?.riskLevel || "low",
+        v2RiskLevel: s2?.riskLevel || "low",
+      };
+    });
+
+    const v1RiskPoints = calculateRiskPoints(v1SectionResults);
+    const v2RiskPoints = calculateRiskPoints(v2SectionResults);
+
+    const v1RiskPointIds = new Set(v1RiskPoints.map(p => p.id));
+    const v2RiskPointIds = new Set(v2RiskPoints.map(p => p.id));
+
+    const v1OnlyRiskPoints = v1RiskPoints.filter(p => !v2RiskPointIds.has(p.id));
+    const v2OnlyRiskPoints = v2RiskPoints.filter(p => !v1RiskPointIds.has(p.id));
+    const commonRiskPoints = v1RiskPoints.filter(p => v2RiskPointIds.has(p.id));
+
+    return { 
+      v1, 
+      v2, 
+      diffs, 
+      sectionDiffs, 
+      v1SectionResults, 
+      v2SectionResults,
+      v1RiskPoints,
+      v2RiskPoints,
+      v1OnlyRiskPoints,
+      v2OnlyRiskPoints,
+      commonRiskPoints,
+    };
   }, [selectedVersions, versions]);
 
   const handleGenerateCommand = () => {
@@ -1013,17 +1100,33 @@ export default function Scheme() {
               <GitCompare className="w-5 h-5 text-primary-500" />
               版本对比
             </h3>
-            <button
-              onClick={() => {
-                setShowComparePanel(false);
-                setSelectedVersions([]);
-              }}
-              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleRollback(compareData.v1.id)}
+                className="btn-secondary flex items-center gap-1.5 text-sm"
+              >
+                <RotateCcw className="w-4 h-4" />
+                回滚到版本A
+              </button>
+              <button
+                onClick={() => handleRollback(compareData.v2.id)}
+                className="btn-secondary flex items-center gap-1.5 text-sm"
+              >
+                <RotateCcw className="w-4 h-4" />
+                回滚到版本B
+              </button>
+              <button
+                onClick={() => {
+                  setShowComparePanel(false);
+                  setSelectedVersions([]);
+                }}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
-          <div className="grid grid-cols-12 gap-4 mb-4">
+          <div className="grid grid-cols-12 gap-4 mb-6">
             <div className="col-span-5 p-3 bg-blue-50 rounded-lg">
               <p className="text-xs text-blue-600 font-medium mb-1">版本 A</p>
               <p className="text-sm font-medium text-blue-800">{compareData.v1.name}</p>
@@ -1042,7 +1145,12 @@ export default function Scheme() {
               </p>
             </div>
           </div>
-          <div className="overflow-x-auto">
+
+          <h4 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+            <Droplets className="w-4 h-4 text-primary-500" />
+            水库参数对比
+          </h4>
+          <div className="overflow-x-auto mb-8">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
@@ -1101,6 +1209,187 @@ export default function Scheme() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <h4 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-blue-500" />
+            下游关键断面水位差异
+          </h4>
+          <div className="overflow-x-auto mb-8">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    断面名称
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本A预计水位
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本B预计水位
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    水位差异
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本A风险等级
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    版本B风险等级
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    风险变化
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareData.sectionDiffs.map((diff) => {
+                  const riskOrder = { low: 0, medium: 1, high: 2 };
+                  const riskChange = riskOrder[diff.v2RiskLevel] - riskOrder[diff.v1RiskLevel];
+                  const v1Risk = getRiskLevelInfo(diff.v1RiskLevel);
+                  const v2Risk = getRiskLevelInfo(diff.v2RiskLevel);
+                  return (
+                    <tr key={diff.sectionId} className="border-b border-gray-100">
+                      <td className="py-3 px-4 text-sm font-medium text-gray-800">
+                        {diff.sectionName}
+                      </td>
+                      <td className="py-3 px-4 text-sm text-right font-mono text-blue-600">
+                        {diff.v1PredictedLevel} m
+                      </td>
+                      <td className="py-3 px-4 text-sm text-right font-mono text-green-600">
+                        {diff.v2PredictedLevel} m
+                      </td>
+                      <td className="py-3 px-4 text-sm text-right font-mono">
+                        <span className={diff.levelDiff > 0 ? "text-red-600" : diff.levelDiff < 0 ? "text-green-600" : "text-gray-500"}>
+                          {diff.levelDiff > 0 ? "+" : ""}{diff.levelDiff.toFixed(1)} m
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${v1Risk.bg} ${v1Risk.color}`}>
+                          {v1Risk.label}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${v2Risk.bg} ${v2Risk.color}`}>
+                          {v2Risk.label}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {riskChange > 0 ? (
+                          <span className="text-red-600 flex items-center justify-center gap-1">
+                            <AlertTriangle className="w-4 h-4" />
+                            升级
+                          </span>
+                        ) : riskChange < 0 ? (
+                          <span className="text-green-600 flex items-center justify-center gap-1">
+                            <Check className="w-4 h-4" />
+                            降级
+                          </span>
+                        ) : (
+                          <span className="text-gray-500 flex items-center justify-center gap-1">
+                            <X className="w-4 h-4" />
+                            不变
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <h4 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-orange-500" />
+            风险点变化对比
+          </h4>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="p-4 bg-red-50 rounded-lg border border-red-100">
+              <div className="flex items-center justify-between mb-3">
+                <h5 className="text-sm font-medium text-red-800">版本A独有风险点</h5>
+                <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
+                  {compareData.v1OnlyRiskPoints.length} 个
+                </span>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {compareData.v1OnlyRiskPoints.length === 0 ? (
+                  <p className="text-xs text-red-400 text-center py-4">无独有风险点</p>
+                ) : (
+                  compareData.v1OnlyRiskPoints.map((point) => {
+                    const riskInfo = getRiskLevelInfo(point.level);
+                    return (
+                      <div key={point.id} className="p-2 bg-white rounded border border-red-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-800">{point.name}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${riskInfo.bg} ${riskInfo.color}`}>
+                            {riskInfo.label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1 truncate">{point.description}</p>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 bg-green-50 rounded-lg border border-green-100">
+              <div className="flex items-center justify-between mb-3">
+                <h5 className="text-sm font-medium text-green-800">版本B独有风险点</h5>
+                <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                  {compareData.v2OnlyRiskPoints.length} 个
+                </span>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {compareData.v2OnlyRiskPoints.length === 0 ? (
+                  <p className="text-xs text-green-400 text-center py-4">无独有风险点</p>
+                ) : (
+                  compareData.v2OnlyRiskPoints.map((point) => {
+                    const riskInfo = getRiskLevelInfo(point.level);
+                    return (
+                      <div key={point.id} className="p-2 bg-white rounded border border-green-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-800">{point.name}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${riskInfo.bg} ${riskInfo.color}`}>
+                            {riskInfo.label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1 truncate">{point.description}</p>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <h5 className="text-sm font-medium text-gray-800">两版本共有风险点</h5>
+                <span className="px-2 py-0.5 bg-gray-200 text-gray-700 text-xs font-medium rounded-full">
+                  {compareData.commonRiskPoints.length} 个
+                </span>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {compareData.commonRiskPoints.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-4">无共有风险点</p>
+                ) : (
+                  compareData.commonRiskPoints.map((point) => {
+                    const riskInfo = getRiskLevelInfo(point.level);
+                    return (
+                      <div key={point.id} className="p-2 bg-white rounded border border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-800">{point.name}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${riskInfo.bg} ${riskInfo.color}`}>
+                            {riskInfo.label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1 truncate">{point.description}</p>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

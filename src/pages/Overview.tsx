@@ -585,7 +585,7 @@ export default function Overview() {
   };
 
   const handleStorageClick = (item: RankItem) => {
-    navigate(`/reservoir/${item.id}`);
+    navigate(`/reservoir/${item.id}?compareRange=${compareTimeRange}`);
   };
 
   const handleRiskClick = (item: RiskChange) => {
@@ -683,7 +683,7 @@ export default function Overview() {
             unit="mm"
             percent={comparisonData.rainfall.percent}
             trend={comparisonData.rainfall.trend}
-            navigatePath="/rainfall"
+            navigatePath={`/rainfall?compareRange=${compareTimeRange}`}
           />
           <ComparisonCard
             title="水位涨幅"
@@ -694,7 +694,7 @@ export default function Overview() {
             unit="m"
             trend={comparisonData.waterLevel.trend}
             showPercent={false}
-            navigatePath="/river"
+            navigatePath={`/river?compareRange=${compareTimeRange}`}
           />
           <ComparisonCard
             title="库容变化"
@@ -705,7 +705,7 @@ export default function Overview() {
             unit="亿m³"
             percent={comparisonData.storage.percent}
             trend={comparisonData.storage.trend}
-            navigatePath="/reservoir/res-001"
+            navigatePath={`/reservoir/res-001?compareRange=${compareTimeRange}`}
           />
           <ComparisonCard
             title="风险点增减"
@@ -716,7 +716,7 @@ export default function Overview() {
             unit="个"
             trend={comparisonData.alerts.trend}
             showPercent={false}
-            navigatePath="/scheme"
+            navigatePath={`/scheme?compareRange=${compareTimeRange}`}
           />
         </div>
 

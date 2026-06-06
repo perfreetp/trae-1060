@@ -346,6 +346,10 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...cmd,
               status: "executing",
               rejectReason: reason,
+              completeTime: undefined,
+              feedback: undefined,
+              confirmTime: undefined,
+              confirmer: undefined,
             }
           : cmd
       ),

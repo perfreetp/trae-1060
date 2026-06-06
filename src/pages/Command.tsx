@@ -110,6 +110,15 @@ export default function CommandPage() {
       if (cmd.status === "cancelled" || cmd.status === "draft") return;
       groups[cmd.status]?.push(cmd);
     });
+    Object.keys(groups).forEach((status) => {
+      groups[status].sort((a, b) => {
+        if (status === "completed") {
+          if (!a.confirmTime && b.confirmTime) return -1;
+          if (a.confirmTime && !b.confirmTime) return 1;
+        }
+        return new Date(b.createTime).getTime() - new Date(a.createTime).getTime();
+      });
+    });
     return groups;
   }, [commands]);
 
@@ -368,6 +377,109 @@ export default function CommandPage() {
     cancelled: "已取消",
   };
 
+  interface TimelineNode {
+    icon: string;
+    title: string;
+    time?: string;
+    operator?: string;
+    color: string;
+    extra?: string;
+  }
+
+  const getTimelineNodes = (command: Command): TimelineNode[] => {
+    const nodes: TimelineNode[] = [];
+
+    nodes.push({
+      icon: "📝",
+      title: "创建指令",
+      time: command.createTime,
+      operator: command.creator,
+      color: "bg-primary-500",
+    });
+
+    if (command.status !== "draft") {
+      nodes.push({
+        icon: "🔍",
+        title: "提交审核",
+        time: command.createTime,
+        operator: command.creator,
+        color: "bg-blue-500",
+      });
+    }
+
+    if (command.approvalTime && command.status !== "rejected") {
+      nodes.push({
+        icon: "✅",
+        title: "审核通过",
+        time: command.approvalTime,
+        operator: command.approver,
+        color: "bg-green-500",
+      });
+      nodes.push({
+        icon: "📤",
+        title: "下达指令",
+        time: command.approvalTime,
+        operator: command.approver,
+        color: "bg-cyan-500",
+      });
+    }
+
+    if (command.approvalTime && command.status === "rejected") {
+      nodes.push({
+        icon: "❌",
+        title: "审核退回",
+        time: command.approvalTime,
+        operator: command.approver,
+        color: "bg-red-500",
+      });
+    }
+
+    const commandSmsRecords = smsRecords.filter((sms) => sms.commandId === command.id);
+    if (commandSmsRecords.length > 0) {
+      const receivers = commandSmsRecords.map((s) => s.receiver).join("、");
+      nodes.push({
+        icon: "💬",
+        title: "短信提醒",
+        time: commandSmsRecords[0].sendTime,
+        operator: `发送给 ${receivers}`,
+        color: "bg-purple-500",
+        extra: commandSmsRecords.length > 1 ? `共 ${commandSmsRecords.length} 条` : undefined,
+      });
+    }
+
+    if (command.executeTime) {
+      nodes.push({
+        icon: "▶️",
+        title: "开始执行",
+        time: command.executeTime,
+        operator: command.executor,
+        color: "bg-orange-500",
+      });
+    }
+
+    if (command.completeTime) {
+      nodes.push({
+        icon: "📝",
+        title: "执行回填",
+        time: command.completeTime,
+        operator: command.executor,
+        color: "bg-teal-500",
+      });
+    }
+
+    if (command.confirmTime) {
+      nodes.push({
+        icon: "✅",
+        title: "确认完成",
+        time: command.confirmTime,
+        operator: command.confirmer,
+        color: "bg-purple-600",
+      });
+    }
+
+    return nodes;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -474,7 +586,11 @@ export default function CommandPage() {
                             <h4 className="font-medium text-gray-800 text-sm line-clamp-1">
                               {cmd.title}
                             </h4>
-                            <StatusBadge status={cmd.status} />
+                            {cmd.status === "completed" && !cmd.confirmTime ? (
+                              <span className="status-badge bg-orange-100 text-orange-800">待确认</span>
+                            ) : (
+                              <StatusBadge status={cmd.status} />
+                            )}
                           </div>
                           <div className="flex items-center gap-2 text-xs text-gray-500">
                             <User className="w-3 h-3" />
@@ -522,7 +638,11 @@ export default function CommandPage() {
                         <Calendar className="w-4 h-4" />
                         {formatTime(selectedCommand.createTime)}
                       </span>
-                      <StatusBadge status={selectedCommand.status} />
+                      {selectedCommand.status === "completed" && !selectedCommand.confirmTime ? (
+                        <span className="status-badge bg-orange-100 text-orange-800">待确认</span>
+                      ) : (
+                        <StatusBadge status={selectedCommand.status} />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -567,7 +687,11 @@ export default function CommandPage() {
                       <div className="p-3 bg-gray-50 rounded-lg">
                         <p className="text-xs text-gray-500 mb-1">执行状态</p>
                         <p className="font-medium">
-                          <StatusBadge status={selectedCommand.status} />
+                          {selectedCommand.status === "completed" && !selectedCommand.confirmTime ? (
+                            <span className="status-badge bg-orange-100 text-orange-800">待确认</span>
+                          ) : (
+                            <StatusBadge status={selectedCommand.status} />
+                          )}
                         </p>
                       </div>
                       {selectedCommand.approver && (
@@ -645,162 +769,130 @@ export default function CommandPage() {
                       <div className="relative">
                         <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
                         <div className="space-y-4">
-                          <div className="relative pl-10">
-                            <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-primary-500" />
-                            <div className="bg-gray-50 rounded-lg p-3">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="font-medium text-sm text-gray-800">创建指令</span>
-                                <span className="text-xs text-gray-500">{formatTime(selectedCommand.createTime)}</span>
-                              </div>
-                              <p className="text-sm text-gray-600">创建人: {selectedCommand.creator}</p>
-                            </div>
-                          </div>
-                          {selectedCommand.status !== "draft" && (
-                            <div className="relative pl-10">
-                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-blue-500" />
+                          {getTimelineNodes(selectedCommand).map((node, index) => (
+                            <div key={index} className="relative pl-10">
+                              <div className={`absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white ${node.color}`} />
                               <div className="bg-gray-50 rounded-lg p-3">
                                 <div className="flex items-center justify-between mb-1">
-                                  <span className="font-medium text-sm text-gray-800">提交审核</span>
-                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.createTime)}</span>
-                                </div>
-                                <p className="text-sm text-gray-600">提交人: {selectedCommand.creator}</p>
-                              </div>
-                            </div>
-                          )}
-                          {selectedCommand.approvalTime && (
-                            <div className="relative pl-10">
-                              <div className={`absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white ${selectedCommand.status === "rejected" ? "bg-red-500" : "bg-green-500"}`} />
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="font-medium text-sm text-gray-800">
-                                    {selectedCommand.status === "rejected" ? "审核退回" : "审核通过"}
+                                  <span className="font-medium text-sm text-gray-800 flex items-center gap-1">
+                                    <span>{node.icon}</span>
+                                    {node.title}
                                   </span>
-                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.approvalTime)}</span>
+                                  {node.time && (
+                                    <span className="text-xs text-gray-500">{formatTime(node.time)}</span>
+                                  )}
                                 </div>
-                                <p className="text-sm text-gray-600">审核人: {selectedCommand.approver}</p>
+                                {node.operator && (
+                                  <p className="text-sm text-gray-600">{node.operator}</p>
+                                )}
+                                {node.extra && (
+                                  <p className="text-xs text-gray-400 mt-1">{node.extra}</p>
+                                )}
                               </div>
                             </div>
-                          )}
-                          {selectedCommand.executeTime && (
-                            <div className="relative pl-10">
-                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-orange-500" />
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="font-medium text-sm text-gray-800">开始执行</span>
-                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.executeTime)}</span>
-                                </div>
-                                <p className="text-sm text-gray-600">执行人: {selectedCommand.executor}</p>
-                              </div>
-                            </div>
-                          )}
-                          {selectedCommand.completeTime && (
-                            <div className="relative pl-10">
-                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-teal-500" />
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="font-medium text-sm text-gray-800">执行回填</span>
-                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.completeTime)}</span>
-                                </div>
-                                <p className="text-sm text-gray-600">执行人: {selectedCommand.executor}</p>
-                              </div>
-                            </div>
-                          )}
-                          {selectedCommand.confirmTime && (
-                            <div className="relative pl-10">
-                              <div className="absolute left-2 top-1 w-4 h-4 rounded-full border-2 border-white bg-purple-500" />
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="font-medium text-sm text-gray-800">确认完成</span>
-                                  <span className="text-xs text-gray-500">{formatTime(selectedCommand.confirmTime)}</span>
-                                </div>
-                                <p className="text-sm text-gray-600">确认人: {selectedCommand.confirmer}</p>
-                              </div>
-                            </div>
-                          )}
+                          ))}
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex gap-3 flex-wrap">
+                    <div className="space-y-3">
                       {selectedCommand.status === "pending_approval" && (
-                        <>
-                          <button
-                            onClick={handleApprove}
-                            className="btn-primary flex items-center gap-2"
-                          >
-                            <ThumbsUp className="w-4 h-4" />
-                            审核通过
-                          </button>
-                          <button
-                            onClick={handleReject}
-                            className="btn-secondary flex items-center gap-2 text-red-600 border-red-200 hover:bg-red-50"
-                          >
-                            <ThumbsDown className="w-4 h-4" />
-                            退回
-                          </button>
-                        </>
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                          <p className="text-sm text-yellow-700 flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            待审核通过后方可下达执行
+                          </p>
+                        </div>
                       )}
-                      {selectedCommand.status === "pending" && (
-                        <>
-                          <button
-                            onClick={handleSendSms}
-                            className="btn-secondary flex items-center gap-2"
-                          >
-                            <Phone className="w-4 h-4" />
-                            发送短信提醒
-                          </button>
-                          <button
-                            onClick={() => handleStartExecute(selectedCommand)}
-                            className="btn-primary flex items-center gap-2"
-                          >
-                            <Send className="w-4 h-4" />
-                            开始执行
-                          </button>
-                          <button
-                            onClick={() => handleCancelCommand(selectedCommand)}
-                            className="btn-secondary flex items-center gap-2 text-red-600 border-red-200 hover:bg-red-50"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            取消指令
-                          </button>
-                        </>
-                      )}
-                      {selectedCommand.status === "executing" && (
-                        <>
-                          <button
-                            onClick={() => setShowFeedbackModal(true)}
-                            className="btn-primary flex items-center gap-2"
-                          >
-                            <CheckSquare className="w-4 h-4" />
-                            执行回填
-                          </button>
-                          <button
-                            onClick={handleSendSms}
-                            className="btn-secondary flex items-center gap-2"
-                          >
-                            <Phone className="w-4 h-4" />
-                            发送短信提醒
-                          </button>
-                        </>
-                      )}
-                      {selectedCommand.status === "completed" && !selectedCommand.confirmTime && (
-                        <>
-                          <button
-                            onClick={handleConfirmCompletion}
-                            className="btn-primary flex items-center gap-2"
-                          >
-                            <FileCheck className="w-4 h-4" />
-                            确认完成
-                          </button>
-                          <button
-                            onClick={handleReturnForReexecution}
-                            className="btn-secondary flex items-center gap-2 text-orange-600 border-orange-200 hover:bg-orange-50"
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                            退回重填
-                          </button>
-                        </>
-                      )}
+                      <div className="flex gap-3 flex-wrap">
+                        {selectedCommand.status === "pending_approval" && (
+                          <>
+                            <button
+                              onClick={handleApprove}
+                              className="btn-primary flex items-center gap-2"
+                            >
+                              <ThumbsUp className="w-4 h-4" />
+                              审核通过
+                            </button>
+                            <button
+                              onClick={handleReject}
+                              className="btn-secondary flex items-center gap-2 text-red-600 border-red-200 hover:bg-red-50"
+                            >
+                              <ThumbsDown className="w-4 h-4" />
+                              退回
+                            </button>
+                          </>
+                        )}
+                        {selectedCommand.status === "pending" && (
+                          <>
+                            <button
+                              onClick={handleSendSms}
+                              className="btn-secondary flex items-center gap-2"
+                            >
+                              <Phone className="w-4 h-4" />
+                              发送短信提醒
+                            </button>
+                            <button
+                              onClick={() => handleStartExecute(selectedCommand)}
+                              className="btn-primary flex items-center gap-2"
+                            >
+                              <Send className="w-4 h-4" />
+                              开始执行
+                            </button>
+                            <button
+                              onClick={() => handleCancelCommand(selectedCommand)}
+                              className="btn-secondary flex items-center gap-2 text-red-600 border-red-200 hover:bg-red-50"
+                            >
+                              <XCircle className="w-4 h-4" />
+                              取消指令
+                            </button>
+                          </>
+                        )}
+                        {selectedCommand.status === "executing" && (
+                          <>
+                            <button
+                              onClick={() => setShowFeedbackModal(true)}
+                              className="btn-primary flex items-center gap-2"
+                            >
+                              <CheckSquare className="w-4 h-4" />
+                              执行回填
+                            </button>
+                            <button
+                              onClick={handleSendSms}
+                              className="btn-secondary flex items-center gap-2"
+                            >
+                              <Phone className="w-4 h-4" />
+                              发送短信提醒
+                            </button>
+                          </>
+                        )}
+                        {selectedCommand.status === "completed" && !selectedCommand.confirmTime && (
+                          <>
+                            <button
+                              onClick={handleConfirmCompletion}
+                              className="btn-primary flex items-center gap-2"
+                            >
+                              <FileCheck className="w-4 h-4" />
+                              确认完成
+                            </button>
+                            <button
+                              onClick={handleReturnForReexecution}
+                              className="btn-secondary flex items-center gap-2 text-orange-600 border-orange-200 hover:bg-orange-50"
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                              退回重填
+                            </button>
+                          </>
+                        )}
+                        {selectedCommand.status === "completed" && selectedCommand.confirmTime && (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-3 w-full">
+                            <p className="text-sm text-green-700 flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4" />
+                              指令已确认完成，流程闭环
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </>
                 )}

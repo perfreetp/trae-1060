@@ -243,9 +243,10 @@ export default function Review() {
     const score = reviewScores.find((s) => s.floodId === selectedScoreFloodId);
     if (flood && score) {
       const floodName = flood.name.replace(/\s+/g, "_");
-      const reviewDate = formatDateForFilename(score.reviewTime);
+      const startDate = formatDateForFilename(flood.startTime);
+      const endDate = formatDateForFilename(flood.endTime);
       const totalScore = Math.round(score.totalScore);
-      const filename = `${floodName}_复盘评分_${reviewDate}_综合${totalScore}分.png`;
+      const filename = `${floodName}_${startDate}_${endDate}_复盘评分_综合${totalScore}分.png`;
       exportChartAsImage(
         radarChartRef.current,
         "复盘评估",
