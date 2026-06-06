@@ -173,3 +173,73 @@ export interface AlertItem {
   time: string;
   source: string;
 }
+
+export type TimeRange = "6h" | "24h" | "3d" | "7d";
+
+export interface SmsRecord {
+  id: string;
+  commandId: string;
+  receiver: string;
+  receiverPhone: string;
+  content: string;
+  sendTime: string;
+  status: "sent" | "failed" | "sending";
+}
+
+export interface TimeSeriesDataPoint {
+  time: string;
+  value: number;
+}
+
+export interface SectionForecast {
+  id: string;
+  name: string;
+  predictedLevel: number;
+  warningLevel: number;
+  riskLevel: "high" | "medium" | "low";
+  timeSeries: TimeSeriesDataPoint[];
+}
+
+export interface CommandFormData {
+  title: string;
+  content: string;
+  reservoirIds: string[];
+  schemeId?: string;
+  receivers: string[];
+  deadline: string;
+}
+
+export interface IssueFormData {
+  title: string;
+  description: string;
+  level: "critical" | "major" | "minor";
+  assignee: string;
+}
+
+export interface ShiftHandoverFormData {
+  shiftType: "day" | "night";
+  incomingPerson: string;
+  waterSummary: string;
+  pendingCommands: string;
+  riskPoints: string;
+  notes: string;
+}
+
+export interface DownstreamSection {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  baseLevel: number;
+  warningLevel: number;
+  dangerLevel: number;
+  influenceCoefficients: Record<string, number>;
+}
+
+export interface ReservoirSimulationState {
+  reservoirId: string;
+  targetLevel: number;
+  discharge: number;
+  startTime: string;
+  endTime: string;
+}

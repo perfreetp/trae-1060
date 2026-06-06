@@ -1,5 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as echarts from "echarts";
+
+export interface ChartRef {
+  getEchartsInstance: () => echarts.ECharts | null;
+}
 
 interface LineChartProps {
   data: {
@@ -14,16 +18,23 @@ interface LineChartProps {
   showLegend?: boolean;
 }
 
-export default function LineChart({
-  data,
-  xAxisData,
-  title,
-  yAxisName,
-  height = 300,
-  showLegend = true,
-}: LineChartProps) {
+const LineChart = forwardRef<ChartRef, LineChartProps>(function LineChart(
+  {
+    data,
+    xAxisData,
+    title,
+    yAxisName,
+    height = 300,
+    showLegend = true,
+  },
+  ref
+) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getEchartsInstance: () => chartInstance.current,
+  }));
 
   useEffect(() => {
     if (chartRef.current) {
@@ -117,8 +128,11 @@ export default function LineChart({
     return () => {
       window.removeEventListener("resize", handleResize);
       chartInstance.current?.dispose();
+      chartInstance.current = null;
     };
   }, [data, xAxisData, title, yAxisName, showLegend]);
 
   return <div ref={chartRef} style={{ height }} />;
-}
+});
+
+export default LineChart;

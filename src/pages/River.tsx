@@ -1,18 +1,65 @@
-import { Waves, Download, TrendingUp, TrendingDown, Minus } from "lucide-react";
-import LineChart from "../components/Charts/LineChart";
+import { useRef, useMemo } from "react";
+import { Waves, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import LineChart, { type ChartRef } from "../components/Charts/LineChart";
 import BasinMap from "../components/Map/BasinMap";
+import TimeRangeSelector from "../components/Common/TimeRangeSelector";
+import ExportButton from "../components/Common/ExportButton";
 import { riverStations } from "../data/river";
+import { useAppStore } from "../store/useAppStore";
 import { formatNumber, formatTime, getTrendColor, getTrendIcon } from "../utils/format";
+import { generateTimeLabels, getDataCount, generateRandomSeries } from "../utils/timeSeries";
 
 export default function River() {
-  const hours = ["8h", "10h", "12h", "14h", "16h"];
-  const colors = ["#3E92CC", "#F77F00", "#D62828", "#38B000", "#0096C7"];
+  const chartRef = useRef<ChartRef>(null);
+  const { timeRange } = useAppStore();
 
-  const chartData = riverStations.map((s, i) => ({
+  const colors = ["#3E92CC", "#F77F00", "#D62828", "#38B000", "#0096C7"];
+  const timeLabels = generateTimeLabels(timeRange);
+  const dataCount = getDataCount(timeRange);
+
+  const stationData = useMemo(() => {
+    return riverStations.map((s) => ({
+      ...s,
+      timeSeries: generateRandomSeries(s.currentLevel, 0.5, dataCount, s.trend),
+    }));
+  }, [timeRange, dataCount]);
+
+  const chartData = stationData.map((s, i) => ({
     name: s.name,
-    values: s.hourlyLevel,
+    values: s.timeSeries,
     color: colors[i % colors.length],
   }));
+
+  const totalStations = stationData.length;
+  const warningStations = stationData.filter(
+    (s) => s.currentLevel >= s.warningLevel
+  ).length;
+  const maxLevel = Math.max(...stationData.map((s) => s.currentLevel));
+  const avgLevel =
+    stationData.reduce((sum, s) => sum + s.currentLevel, 0) / totalStations;
+
+  const tableHeaders = [
+    "站点名称",
+    "当前水位 (m)",
+    "警戒水位 (m)",
+    "危险水位 (m)",
+    "趋势",
+    "状态",
+    "更新时间",
+  ];
+  const tableRows = stationData.map((s) => [
+    s.name,
+    formatNumber(s.currentLevel),
+    s.warningLevel,
+    s.dangerLevel,
+    s.trend === "up" ? "上涨" : s.trend === "down" ? "下降" : "平稳",
+    s.currentLevel >= s.dangerLevel
+      ? "超危险"
+      : s.currentLevel >= s.warningLevel
+      ? "超警戒"
+      : "正常",
+    formatTime(s.updateTime),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -21,53 +68,43 @@ export default function River() {
           <Waves className="w-6 h-6 text-primary-500" />
           河道水位监测
         </h2>
-        <button className="btn-secondary flex items-center gap-2">
-          <Download className="w-4 h-4" />
-          导出数据
-        </button>
+        <div className="flex items-center gap-3">
+          <TimeRangeSelector />
+          <ExportButton
+            chartRef={chartRef}
+            pageName="河道水位监测"
+            entityName="多站点对比"
+            timeRange={timeRange}
+            tableData={{ headers: tableHeaders, rows: tableRows }}
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-4">
-        {riverStations.map((station) => (
-          <div key={station.id} className="data-card">
-            <p className="text-sm text-gray-500 mb-1">{station.name}</p>
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold font-mono text-primary-600">
-                {formatNumber(station.currentLevel)}
-              </span>
-              <span className="text-sm text-gray-500">m</span>
-            </div>
-            <div className="flex items-center gap-1 mt-2">
-              <span
-                className={`text-sm font-mono ${getTrendColor(
-                  station.trend
-                )}`}
-              >
-                {getTrendIcon(station.trend)}
-              </span>
-              <span className="text-xs text-gray-500">
-                警戒 {station.warningLevel}m
-              </span>
-            </div>
-            <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${
-                  station.currentLevel >= station.dangerLevel
-                    ? "bg-red-500"
-                    : station.currentLevel >= station.warningLevel
-                    ? "bg-orange-500"
-                    : "bg-primary-500"
-                }`}
-                style={{
-                  width: `${Math.min(
-                    (station.currentLevel / station.dangerLevel) * 100,
-                    100
-                  )}%`,
-                }}
-              />
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-4 gap-4">
+        <div className="data-card">
+          <p className="text-sm text-gray-500">河道站数</p>
+          <p className="text-2xl font-bold text-gray-800 font-mono">
+            {totalStations}
+          </p>
+        </div>
+        <div className="data-card">
+          <p className="text-sm text-gray-500">超警站数</p>
+          <p className="text-2xl font-bold text-alert-danger font-mono">
+            {warningStations}
+          </p>
+        </div>
+        <div className="data-card">
+          <p className="text-sm text-gray-500">最高水位</p>
+          <p className="text-2xl font-bold text-alert-warning font-mono">
+            {formatNumber(maxLevel)} m
+          </p>
+        </div>
+        <div className="data-card">
+          <p className="text-sm text-gray-500">平均水位</p>
+          <p className="text-2xl font-bold text-primary-600 font-mono">
+            {formatNumber(avgLevel)} m
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-6">
@@ -75,8 +112,9 @@ export default function River() {
           <div className="data-card">
             <h3 className="font-semibold text-gray-800 mb-4">水位趋势对比</h3>
             <LineChart
+              ref={chartRef}
               data={chartData}
-              xAxisData={hours}
+              xAxisData={timeLabels}
               yAxisName="水位 (m)"
               height={300}
             />
@@ -84,7 +122,7 @@ export default function River() {
         </div>
         <div className="data-card">
           <h3 className="font-semibold text-gray-800 mb-4">河道站点分布</h3>
-          <BasinMap riverStations={riverStations} height="280px" />
+          <BasinMap riverStations={stationData} height="280px" />
         </div>
       </div>
 
@@ -104,13 +142,19 @@ export default function River() {
               </tr>
             </thead>
             <tbody>
-              {riverStations.map((station) => {
+              {stationData.map((station) => {
                 const isWarning = station.currentLevel >= station.warningLevel;
                 const isDanger = station.currentLevel >= station.dangerLevel;
                 return (
                   <tr
                     key={station.id}
-                    className={isDanger ? "bg-red-50" : isWarning ? "bg-orange-50" : "hover:bg-gray-50"}
+                    className={
+                      isDanger
+                        ? "bg-red-50"
+                        : isWarning
+                        ? "bg-orange-50"
+                        : "hover:bg-gray-50"
+                    }
                   >
                     <td className="table-cell font-medium">{station.name}</td>
                     <td className="table-cell font-mono font-medium">

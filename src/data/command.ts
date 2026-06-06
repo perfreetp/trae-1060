@@ -1,4 +1,4 @@
-import type { Command, DispatchLog, Scheme, AlertItem } from "../types";
+import type { Command, DispatchLog, Scheme, AlertItem, SmsRecord } from "../types";
 
 export const commands: Command[] = [
   {
@@ -197,4 +197,42 @@ export const alerts: AlertItem[] = [
     time: "2024-06-06 12:00:00",
     source: "沙市水文站",
   },
+];
+
+export const smsRecords: SmsRecord[] = [
+  {
+    id: "sms-001",
+    commandId: "cmd-001",
+    receiver: "王值班",
+    receiverPhone: "13800138001",
+    content: "【调度指令】cmd-001：清江水库加大泄流量，请将泄洪闸开度调至60%，确保库水位控制在196m以下。",
+    sendTime: "2024-06-06 09:30:15",
+    status: "sent",
+  },
+  {
+    id: "sms-002",
+    commandId: "cmd-001",
+    receiver: "李主任",
+    receiverPhone: "13800138002",
+    content: "【调度指令】cmd-001：清江水库加大泄流量，请将泄洪闸开度调至60%，确保库水位控制在196m以下。",
+    sendTime: "2024-06-06 09:30:20",
+    status: "sent",
+  },
+  {
+    id: "sms-003",
+    commandId: "cmd-002",
+    receiver: "刘值班",
+    receiverPhone: "13800138003",
+    content: "【调度指令】cmd-002：丹江口水库预泄，将出库流量增加至800m³/s。",
+    sendTime: "2024-06-06 08:00:10",
+    status: "sent",
+  },
+];
+
+export const receivers = [
+  { id: "r-001", name: "王值班", phone: "13800138001", role: "水库值班员" },
+  { id: "r-002", name: "刘值班", phone: "13800138003", role: "水库值班员" },
+  { id: "r-003", name: "陈值班", phone: "13800138004", role: "水库值班员" },
+  { id: "r-004", name: "李主任", phone: "13800138002", role: "调度主任" },
+  { id: "r-005", name: "赵科长", phone: "13800138005", role: "防汛科长" },
 ];

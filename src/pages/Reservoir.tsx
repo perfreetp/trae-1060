@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   Droplets,
@@ -6,12 +6,14 @@ import {
   ArrowUpFromLine,
   Gauge,
   FileText,
-  Download,
   Plus,
 } from "lucide-react";
 import DualAxisChart from "../components/Charts/DualAxisChart";
-import LineChart from "../components/Charts/LineChart";
+import LineChart, { type ChartRef } from "../components/Charts/LineChart";
+import TimeRangeSelector from "../components/Common/TimeRangeSelector";
+import ExportButton from "../components/Common/ExportButton";
 import { reservoirs, forecasts } from "../data/reservoir";
+import { useAppStore } from "../store/useAppStore";
 import { formatNumber, formatTime } from "../utils/format";
 
 export default function Reservoir() {
@@ -20,6 +22,11 @@ export default function Reservoir() {
   const forecast = forecasts.find((f) => f.reservoirId === reservoir.id);
   const [selectedTab, setSelectedTab] = useState<"info" | "discharge" | "forecast">("info");
   const [opening, setOpening] = useState(50);
+  const storageChartRef = useRef<ChartRef>(null);
+  const inflowChartRef = useRef<ChartRef>(null);
+  const dischargeChartRef = useRef<ChartRef>(null);
+  const forecastChartRef = useRef<ChartRef>(null);
+  const { timeRange } = useAppStore();
 
   const storageLevels = reservoir.storageCurve.map((p) => p.level.toString());
   const storageValues = reservoir.storageCurve.map((p) => p.storage);
@@ -57,10 +64,21 @@ export default function Reservoir() {
             <p className="text-sm text-gray-500">单库详细信息与调度操作</p>
           </div>
         </div>
-        <button className="btn-secondary flex items-center gap-2">
-          <Download className="w-4 h-4" />
-          导出报告
-        </button>
+        <div className="flex items-center gap-3">
+          <TimeRangeSelector />
+          <ExportButton
+            chartRef={
+              selectedTab === "info"
+                ? storageChartRef
+                : selectedTab === "discharge"
+                ? dischargeChartRef
+                : forecastChartRef
+            }
+            pageName="水库调度"
+            entityName={reservoir.name}
+            timeRange={timeRange}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-4">
@@ -150,6 +168,7 @@ export default function Reservoir() {
         <div className="grid grid-cols-2 gap-6">
           <div className="data-card">
             <DualAxisChart
+              ref={storageChartRef}
               leftData={storageValues}
               rightData={reservoir.storageCurve.map((_, i) => i * 100)}
               xAxisData={storageLevels}
@@ -161,6 +180,7 @@ export default function Reservoir() {
           </div>
           <div className="data-card">
             <LineChart
+              ref={inflowChartRef}
               data={[
                 {
                   name: "入库流量",
@@ -214,6 +234,7 @@ export default function Reservoir() {
           </div>
           <div className="data-card">
             <LineChart
+              ref={dischargeChartRef}
               data={[
                 {
                   name: "泄流量",
@@ -255,6 +276,7 @@ export default function Reservoir() {
                   </span>
                 </div>
                 <LineChart
+                  ref={forecastChartRef}
                   data={[
                     {
                       name: "预报入库流量",

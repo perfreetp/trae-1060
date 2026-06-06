@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as echarts from "echarts";
+import type { ChartRef } from "./LineChart";
 
 interface RadarChartProps {
   indicators: { name: string; max: number }[];
@@ -8,14 +9,21 @@ interface RadarChartProps {
   height?: number;
 }
 
-export default function RadarChart({
-  indicators,
-  values,
-  title,
-  height = 300,
-}: RadarChartProps) {
+const RadarChart = forwardRef<ChartRef, RadarChartProps>(function RadarChart(
+  {
+    indicators,
+    values,
+    title,
+    height = 300,
+  },
+  ref
+) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getEchartsInstance: () => chartInstance.current,
+  }));
 
   useEffect(() => {
     if (chartRef.current) {
@@ -99,4 +107,6 @@ export default function RadarChart({
   }, [indicators, values, title]);
 
   return <div ref={chartRef} style={{ height }} />;
-}
+});
+
+export default RadarChart;

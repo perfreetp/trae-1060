@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import * as echarts from "echarts";
+import type { ChartRef } from "./LineChart";
 
 interface DualAxisChartProps {
   leftData: number[];
@@ -11,17 +12,24 @@ interface DualAxisChartProps {
   height?: number;
 }
 
-export default function DualAxisChart({
-  leftData,
-  rightData,
-  xAxisData,
-  leftName,
-  rightName,
-  title,
-  height = 300,
-}: DualAxisChartProps) {
+const DualAxisChart = forwardRef<ChartRef, DualAxisChartProps>(function DualAxisChart(
+  {
+    leftData,
+    rightData,
+    xAxisData,
+    leftName,
+    rightName,
+    title,
+    height = 300,
+  },
+  ref
+) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getEchartsInstance: () => chartInstance.current,
+  }));
 
   useEffect(() => {
     if (chartRef.current) {
@@ -128,4 +136,6 @@ export default function DualAxisChart({
   }, [leftData, rightData, xAxisData, leftName, rightName, title]);
 
   return <div ref={chartRef} style={{ height }} />;
-}
+});
+
+export default DualAxisChart;
