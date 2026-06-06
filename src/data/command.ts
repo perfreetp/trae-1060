@@ -227,6 +227,15 @@ export const smsRecords: SmsRecord[] = [
     sendTime: "2024-06-06 08:00:10",
     status: "sent",
   },
+  {
+    id: "sms-004",
+    commandId: "cmd-003",
+    receiver: "陈值班",
+    receiverPhone: "13800138004",
+    content: "【调度指令】cmd-003：三峡水库维持当前出库流量，当前水情平稳，维持出库流量10500m³/s不变。",
+    sendTime: "2024-06-06 07:05:30",
+    status: "failed",
+  },
 ];
 
 export const receivers = [

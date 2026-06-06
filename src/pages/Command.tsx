@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import {
   MessageSquare,
   Plus,
@@ -14,6 +15,9 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
+  Square,
+  CheckSquare as CheckSquareIcon,
 } from "lucide-react";
 import StatusBadge from "../components/Common/StatusBadge";
 import { dispatchLogs, schemes } from "../data/command";
@@ -23,7 +27,7 @@ import type { Command, CommandFormData } from "../types";
 import { useAppStore } from "../store/useAppStore";
 
 export default function CommandPage() {
-  const { commands, smsRecords, receivers, currentUser, addCommand, updateCommandStatus, sendSms } =
+  const { commands, smsRecords, receivers, currentUser, addCommand, updateCommandStatus, sendSms, batchSendSms, resendSms } =
     useAppStore();
 
   const [selectedCommand, setSelectedCommand] = useState<Command | null>(commands[0] || null);
@@ -48,6 +52,18 @@ export default function CommandPage() {
   });
 
   const [selectedSmsReceivers, setSelectedSmsReceivers] = useState<string[]>([]);
+  const [selectedCommandIds, setSelectedCommandIds] = useState<string[]>([]);
+  const [showBatchSmsModal, setShowBatchSmsModal] = useState(false);
+
+  const pendingCommands = useMemo(
+    () => commands.filter((c) => c.status === "pending"),
+    [commands]
+  );
+
+  const allPendingSelected = useMemo(
+    () => pendingCommands.length > 0 && pendingCommands.every((c) => selectedCommandIds.includes(c.id)),
+    [pendingCommands, selectedCommandIds]
+  );
 
   const groupedCommands = useMemo(() => {
     const groups: Record<string, Command[]> = {
@@ -70,6 +86,57 @@ export default function CommandPage() {
   const toggleGroup = (status: string) => {
     setExpandedGroups((prev) => ({ ...prev, [status]: !prev[status] }));
   };
+
+  const handleImportFromScheme = (schemeId: string) => {
+    if (!schemeId) {
+      setFormData((prev) => ({ ...prev, schemeId: "" }));
+      return;
+    }
+    
+    const scheme = schemes.find((s) => s.id === schemeId);
+    if (!scheme) return;
+
+    const reservoirIds = scheme.reservoirOperations.map((op) => op.reservoirId);
+    
+    const startTime = scheme.reservoirOperations.reduce((earliest, op) => 
+      new Date(op.startTime) < new Date(earliest) ? op.startTime : earliest, 
+      scheme.reservoirOperations[0]?.startTime || ""
+    );
+    const endTime = scheme.reservoirOperations.reduce((latest, op) => 
+      new Date(op.endTime) > new Date(latest) ? op.endTime : latest, 
+      scheme.reservoirOperations[0]?.endTime || ""
+    );
+
+    const targetLevelDesc = scheme.reservoirOperations
+      .map((op) => `${op.reservoirName}目标水位${op.targetLevel}m`)
+      .join("，");
+
+    setFormData((prev) => ({
+      ...prev,
+      schemeId,
+      reservoirIds,
+      title: prev.title || `基于方案「${scheme.name}」的调度指令`,
+      content: `${prev.content ? prev.content + "\n\n" : ""}按方案「${scheme.name}」执行，控制目标：${targetLevelDesc}。执行时段：${startTime} 至 ${endTime}。`,
+    }));
+  };
+
+  useEffect(() => {
+    const schemeIdFromUrl = searchParams.get("schemeId");
+    if (schemeIdFromUrl) {
+      handleNewCommand();
+      setTimeout(() => {
+        handleImportFromScheme(schemeIdFromUrl);
+      }, 0);
+    }
+    
+    const commandIdFromUrl = searchParams.get("commandId");
+    if (commandIdFromUrl) {
+      const cmd = commands.find((c) => c.id === commandIdFromUrl);
+      if (cmd) {
+        setSelectedCommand(cmd);
+      }
+    }
+  }, [searchParams, commands]);
 
   const handleNewCommand = () => {
     setFormData({
@@ -106,6 +173,46 @@ export default function CommandPage() {
     sendSms(selectedCommand.id, selectedSmsReceivers);
     setShowSmsModal(false);
     setSelectedSmsReceivers([]);
+  };
+
+  const handleToggleSelectAll = () => {
+    if (allPendingSelected) {
+      setSelectedCommandIds([]);
+    } else {
+      setSelectedCommandIds(pendingCommands.map((c) => c.id));
+    }
+  };
+
+  const handleToggleCommandSelect = (commandId: string) => {
+    setSelectedCommandIds((prev) =>
+      prev.includes(commandId)
+        ? prev.filter((id) => id !== commandId)
+        : [...prev, commandId]
+    );
+  };
+
+  const handleBatchSendSms = () => {
+    if (selectedCommandIds.length === 0) {
+      alert("请先选择要发送短信的指令");
+      return;
+    }
+    setSelectedSmsReceivers([]);
+    setShowBatchSmsModal(true);
+  };
+
+  const handleConfirmBatchSms = () => {
+    if (selectedSmsReceivers.length === 0) {
+      alert("请选择接收人");
+      return;
+    }
+    batchSendSms(selectedCommandIds, selectedSmsReceivers);
+    setShowBatchSmsModal(false);
+    setSelectedSmsReceivers([]);
+    setSelectedCommandIds([]);
+  };
+
+  const handleResendSms = (smsRecordId: string) => {
+    resendSms(smsRecordId);
   };
 
   const handleStartExecute = (cmd: Command) => {
@@ -160,6 +267,42 @@ export default function CommandPage() {
         <div className="col-span-1 space-y-4">
           <h3 className="text-sm font-medium text-gray-600 mb-2">指令列表</h3>
           
+          <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-medium text-gray-700">批量操作</span>
+              {selectedCommandIds.length > 0 && (
+                <span className="text-xs text-primary-600 font-medium">
+                  已选 {selectedCommandIds.length} 条
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 mb-3">
+              <button
+                onClick={handleToggleSelectAll}
+                className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
+              >
+                {allPendingSelected ? (
+                  <CheckSquareIcon className="w-4 h-4 text-primary-600" />
+                ) : (
+                  <Square className="w-4 h-4" />
+                )}
+                <span>全选待执行</span>
+              </button>
+            </div>
+            <button
+              onClick={handleBatchSendSms}
+              disabled={selectedCommandIds.length === 0}
+              className={`w-full py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
+                selectedCommandIds.length > 0
+                  ? "btn-primary"
+                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+              }`}
+            >
+              <Phone className="w-4 h-4" />
+              批量发送短信提醒
+            </button>
+          </div>
+          
           {(["pending", "executing", "completed"] as const).map((status) => (
             <div key={status} className="space-y-2">
               <button
@@ -180,32 +323,53 @@ export default function CommandPage() {
                   {groupedCommands[status]?.map((cmd) => (
                     <div
                       key={cmd.id}
-                      onClick={() => setSelectedCommand(cmd)}
-                      className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                      className={`p-3 rounded-lg border transition-all ${
                         selectedCommand?.id === cmd.id
                           ? "border-primary-500 bg-primary-50"
                           : "border-gray-200 bg-white hover:border-gray-300"
                       }`}
                     >
-                      <div className="flex items-start justify-between mb-2">
-                        <h4 className="font-medium text-gray-800 text-sm line-clamp-1">
-                          {cmd.title}
-                        </h4>
-                        <StatusBadge status={cmd.status} />
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <User className="w-3 h-3" />
-                        <span className="truncate">{cmd.executor}</span>
-                        <span className="text-gray-300">|</span>
-                        <Clock className="w-3 h-3" />
-                        <span>{formatTime(cmd.createTime)}</span>
-                      </div>
-                      {cmd.smsSent && (
-                        <div className="mt-2 flex items-center gap-1 text-xs text-green-600">
-                          <Phone className="w-3 h-3" />
-                          <span>短信已通知</span>
+                      <div className="flex items-start gap-2">
+                        {status === "pending" && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleCommandSelect(cmd.id);
+                            }}
+                            className="mt-0.5 flex-shrink-0"
+                          >
+                            {selectedCommandIds.includes(cmd.id) ? (
+                              <CheckSquareIcon className="w-4 h-4 text-primary-600" />
+                            ) : (
+                              <Square className="w-4 h-4 text-gray-400" />
+                            )}
+                          </button>
+                        )}
+                        <div
+                          onClick={() => setSelectedCommand(cmd)}
+                          className="flex-1 cursor-pointer"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <h4 className="font-medium text-gray-800 text-sm line-clamp-1">
+                              {cmd.title}
+                            </h4>
+                            <StatusBadge status={cmd.status} />
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <User className="w-3 h-3" />
+                            <span className="truncate">{cmd.executor}</span>
+                            <span className="text-gray-300">|</span>
+                            <Clock className="w-3 h-3" />
+                            <span>{formatTime(cmd.createTime)}</span>
+                          </div>
+                          {cmd.smsSent && (
+                            <div className="mt-2 flex items-center gap-1 text-xs text-green-600">
+                              <Phone className="w-3 h-3" />
+                              <span>短信已通知</span>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))}
                   {!groupedCommands[status]?.length && (
@@ -383,21 +547,32 @@ export default function CommandPage() {
                                 {sms.receiverPhone}
                               </span>
                             </div>
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full ${
-                                sms.status === "sent"
-                                  ? "bg-green-100 text-green-700"
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-xs px-2 py-0.5 rounded-full ${
+                                  sms.status === "sent"
+                                    ? "bg-green-100 text-green-700"
+                                    : sms.status === "failed"
+                                    ? "bg-red-100 text-red-700"
+                                    : "bg-gray-100 text-gray-700"
+                                }`}
+                              >
+                                {sms.status === "sent"
+                                  ? "已发送"
                                   : sms.status === "failed"
-                                  ? "bg-red-100 text-red-700"
-                                  : "bg-yellow-100 text-yellow-700"
-                              }`}
-                            >
-                              {sms.status === "sent"
-                                ? "已发送"
-                                : sms.status === "failed"
-                                ? "发送失败"
-                                : "发送中"}
-                            </span>
+                                  ? "发送失败"
+                                  : "发送中"}
+                              </span>
+                              {sms.status === "failed" && (
+                                <button
+                                  onClick={() => handleResendSms(sms.id)}
+                                  className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  重发
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <p className="text-sm text-gray-600 mb-1">{sms.content}</p>
                           <p className="text-xs text-gray-400">
@@ -535,21 +710,26 @@ export default function CommandPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-600 mb-2">关联方案</label>
-                <select
-                  value={formData.schemeId}
-                  onChange={(e) =>
-                    setFormData({ ...formData, schemeId: e.target.value })
-                  }
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                >
-                  <option value="">请选择方案</option>
-                  {schemes.map((scheme) => (
-                    <option key={scheme.id} value={scheme.id}>
-                      {scheme.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="block text-sm text-gray-600 mb-2">从方案导入</label>
+                <div className="flex gap-2">
+                  <select
+                    value={formData.schemeId}
+                    onChange={(e) => handleImportFromScheme(e.target.value)}
+                    className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="">请选择方案导入</option>
+                    {schemes.map((scheme) => (
+                      <option key={scheme.id} value={scheme.id}>
+                        {scheme.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {formData.schemeId && (
+                  <p className="text-xs text-primary-600 mt-1">
+                    ✓ 已从方案导入水库、时段和控制目标信息
+                  </p>
+                )}
               </div>
 
               <div>
@@ -720,6 +900,79 @@ export default function CommandPage() {
               </button>
               <button onClick={handleConfirmSms} className="btn-primary">
                 发送短信
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatchSmsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-[500px] animate-slide-up">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">批量发送短信提醒</h3>
+              <button
+                onClick={() => setShowBatchSmsModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="mb-2 p-3 bg-primary-50 rounded-lg border border-primary-100">
+              <p className="text-sm text-primary-700">
+                已选择 <span className="font-semibold">{selectedCommandIds.length}</span> 条指令
+              </p>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm text-gray-600 mb-2">选择接收人</label>
+              <div className="space-y-2">
+                {receivers.map((rec) => (
+                  <label
+                    key={rec.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                      selectedSmsReceivers.includes(rec.id)
+                        ? "bg-primary-50 border border-primary-200"
+                        : "bg-gray-50 border border-transparent hover:bg-gray-100"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedSmsReceivers.includes(rec.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedSmsReceivers([
+                            ...selectedSmsReceivers,
+                            rec.id,
+                          ]);
+                        } else {
+                          setSelectedSmsReceivers(
+                            selectedSmsReceivers.filter((id) => id !== rec.id)
+                          );
+                        }
+                      }}
+                      className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500"
+                    />
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-800 text-sm">
+                        {rec.name}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {rec.phone} · {rec.role}
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowBatchSmsModal(false)}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+              <button onClick={handleConfirmBatchSms} className="btn-primary">
+                批量发送
               </button>
             </div>
           </div>

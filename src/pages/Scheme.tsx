@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   GitBranch,
   Play,
@@ -7,6 +8,9 @@ import {
   Droplets,
   Clock,
   ChevronDown,
+  Plus,
+  Eye,
+  FileText,
 } from "lucide-react";
 import BasinMap from "../components/Map/BasinMap";
 import StatusBadge from "../components/Common/StatusBadge";
@@ -18,10 +22,36 @@ import type {
   ReservoirSimulationState,
   RiskPoint,
   DownstreamSection,
+  Command,
 } from "../types";
 import { formatNumber, formatTime } from "../utils/format";
+import { useAppStore } from "../store/useAppStore";
+
+const calculateDurationHours = (startTime: string, endTime: string): number => {
+  const start = new Date(startTime).getTime();
+  const end = new Date(endTime).getTime();
+  return Math.max(0, (end - start) / (1000 * 60 * 60));
+};
+
+const calculateOverlapHours = (
+  start1: string,
+  end1: string,
+  start2: string,
+  end2: string
+): number => {
+  const s1 = new Date(start1).getTime();
+  const e1 = new Date(end1).getTime();
+  const s2 = new Date(start2).getTime();
+  const e2 = new Date(end2).getTime();
+  const overlapStart = Math.max(s1, s2);
+  const overlapEnd = Math.min(e1, e2);
+  return Math.max(0, (overlapEnd - overlapStart) / (1000 * 60 * 60));
+};
 
 export default function Scheme() {
+  const navigate = useNavigate();
+  const { getCommandsBySchemeId } = useAppStore();
+  
   const [selectedScheme, setSelectedScheme] = useState(schemes[0]);
   const [showSchemeDropdown, setShowSchemeDropdown] = useState(false);
   const [highlightedReservoirId, setHighlightedReservoirId] = useState<
@@ -56,54 +86,199 @@ export default function Scheme() {
     "2024-06-08 08:00:00",
   ];
 
+  const STORAGE_COEFFICIENT = 0.15;
+  const DURATION_COEFFICIENT = 0.02;
+  const DISCHARGE_COEFFICIENT_BASE = 1;
+  const OVERLAY_COEFFICIENT = 0.3;
+
+  const reservoirImpactValues = useMemo(() => {
+    return simulationStates.map((state) => {
+      const reservoir = reservoirs.find((r) => r.id === state.reservoirId);
+      if (!reservoir) return { reservoirId: state.reservoirId, impactValue: 0 };
+
+      const targetLevelDiff = state.targetLevel - reservoir.floodLimitLevel;
+      const durationHours = calculateDurationHours(state.startTime, state.endTime);
+
+      const targetImpact = targetLevelDiff * STORAGE_COEFFICIENT;
+      const durationImpact = durationHours * DURATION_COEFFICIENT;
+      const dischargeImpact = state.discharge * 0.001;
+
+      const impactValue = targetImpact + durationImpact + dischargeImpact;
+
+      return {
+        reservoirId: state.reservoirId,
+        impactValue: Math.round(impactValue * 100) / 100,
+      };
+    });
+  }, [simulationStates]);
+
+  const relatedCommands = useMemo(() => {
+    if (!selectedScheme) return [];
+    return getCommandsBySchemeId(selectedScheme.id);
+  }, [selectedScheme, getCommandsBySchemeId]);
+
+  const riskAccumulation = useMemo(() => {
+    let totalAccumulation = 0;
+    const reservoirDurations: Record<string, number> = {};
+
+    simulationStates.forEach((state) => {
+      const durationHours = calculateDurationHours(state.startTime, state.endTime);
+      reservoirDurations[state.reservoirId] = durationHours;
+      totalAccumulation += durationHours * 0.5;
+    });
+
+    for (let i = 0; i < simulationStates.length; i++) {
+      for (let j = i + 1; j < simulationStates.length; j++) {
+        const overlap = calculateOverlapHours(
+          simulationStates[i].startTime,
+          simulationStates[i].endTime,
+          simulationStates[j].startTime,
+          simulationStates[j].endTime
+        );
+        totalAccumulation += overlap * OVERLAY_COEFFICIENT;
+      }
+    }
+
+    let accumulationLevel: "low" | "medium" | "high" = "low";
+    if (totalAccumulation >= 50) {
+      accumulationLevel = "high";
+    } else if (totalAccumulation >= 25) {
+      accumulationLevel = "medium";
+    }
+
+    return {
+      totalAccumulation: Math.round(totalAccumulation * 10) / 10,
+      accumulationLevel,
+      reservoirDurations,
+    };
+  }, [simulationStates]);
+
   const sectionResults = useMemo(() => {
     return downstreamSections.map((section) => {
       let predictedLevel = section.baseLevel;
+      let sectionAccumulation = 0;
+
       simulationStates.forEach((state) => {
+        const reservoir = reservoirs.find((r) => r.id === state.reservoirId);
+        if (!reservoir) return;
+
         const coefficient = section.influenceCoefficients[state.reservoirId] || 0;
-        predictedLevel += state.discharge * coefficient;
+        const dischargeInfluence = state.discharge * coefficient * DISCHARGE_COEFFICIENT_BASE;
+        predictedLevel += dischargeInfluence;
+
+        const targetLevelDiff = state.targetLevel - reservoir.floodLimitLevel;
+        const targetInfluence = targetLevelDiff * STORAGE_COEFFICIENT * coefficient * 10;
+        predictedLevel += targetInfluence;
+
+        const durationHours = calculateDurationHours(state.startTime, state.endTime);
+        const durationInfluence = durationHours * DURATION_COEFFICIENT * coefficient * 5;
+        predictedLevel += durationInfluence;
+        sectionAccumulation += durationHours * 0.3;
       });
 
-      let riskLevel: "low" | "medium" | "high" = "low";
+      for (let i = 0; i < simulationStates.length; i++) {
+        for (let j = i + 1; j < simulationStates.length; j++) {
+          const overlap = calculateOverlapHours(
+            simulationStates[i].startTime,
+            simulationStates[i].endTime,
+            simulationStates[j].startTime,
+            simulationStates[j].endTime
+          );
+          const coeff1 = section.influenceCoefficients[simulationStates[i].reservoirId] || 0;
+          const coeff2 = section.influenceCoefficients[simulationStates[j].reservoirId] || 0;
+          const avgCoeff = (coeff1 + coeff2) / 2;
+          predictedLevel += overlap * OVERLAY_COEFFICIENT * avgCoeff * 2;
+          sectionAccumulation += overlap * 0.2;
+        }
+      }
+
+      let baseRiskLevel: "low" | "medium" | "high" = "low";
       if (predictedLevel >= section.dangerLevel) {
-        riskLevel = "high";
+        baseRiskLevel = "high";
       } else if (predictedLevel >= section.warningLevel) {
-        riskLevel = "medium";
+        baseRiskLevel = "medium";
+      }
+
+      let finalRiskLevel = baseRiskLevel;
+      if (sectionAccumulation >= 30 && baseRiskLevel === "medium") {
+        finalRiskLevel = "high";
+      } else if (sectionAccumulation >= 15 && baseRiskLevel === "low") {
+        finalRiskLevel = "medium";
       }
 
       return {
         ...section,
         predictedLevel: Math.round(predictedLevel * 10) / 10,
-        riskLevel,
+        riskLevel: finalRiskLevel,
+        baseRiskLevel,
+        sectionAccumulation: Math.round(sectionAccumulation * 10) / 10,
       };
     });
   }, [simulationStates]);
 
   const overallRiskLevel = useMemo(() => {
     const levels = sectionResults.map((s) => s.riskLevel);
-    if (levels.includes("high")) return "high";
-    if (levels.includes("medium")) return "medium";
+    if (levels.includes("high") || riskAccumulation.accumulationLevel === "high") {
+      return "high";
+    }
+    if (levels.includes("medium") || riskAccumulation.accumulationLevel === "medium") {
+      return "medium";
+    }
     return "low";
-  }, [sectionResults]);
+  }, [sectionResults, riskAccumulation]);
 
   const riskPoints = useMemo(() => {
     const points: RiskPoint[] = [];
     sectionResults.forEach((section) => {
-      if (section.riskLevel === "low") return;
+      if (section.riskLevel === "low" && section.sectionAccumulation < 10) return;
 
-      const pointCount = section.riskLevel === "high" ? 3 : 2;
-      for (let i = 0; i < pointCount; i++) {
-        const angle = (i / pointCount) * Math.PI * 2;
+      let basePointCount = 0;
+      if (section.riskLevel === "high") {
+        basePointCount = 3;
+      } else if (section.riskLevel === "medium") {
+        basePointCount = 2;
+      } else {
+        basePointCount = 1;
+      }
+
+      let bonusPoints = 0;
+      if (section.sectionAccumulation >= 40) {
+        bonusPoints = 2;
+      } else if (section.sectionAccumulation >= 20) {
+        bonusPoints = 1;
+      }
+
+      const totalPoints = Math.min(basePointCount + bonusPoints, 5);
+      const isHighAccumulation = section.sectionAccumulation >= 20;
+
+      for (let i = 0; i < totalPoints; i++) {
+        const angle = (i / totalPoints) * Math.PI * 2;
         const distance = 0.15 + i * 0.05;
+
+        let pointLevel: "high" | "medium" | "low" = section.riskLevel;
+        if (isHighAccumulation && i < bonusPoints && section.riskLevel !== "high") {
+          pointLevel = section.riskLevel === "medium" ? "high" : "medium";
+        }
+
+        let description = `${section.name}断面水位${section.predictedLevel}m`;
+        if (section.sectionAccumulation >= 20) {
+          description += `，执行时段累积风险较高`;
+        }
+        if (section.riskLevel === "high") {
+          description += "，超危险水位";
+        } else if (section.riskLevel === "medium") {
+          description += "，接近警戒水位";
+        } else {
+          description += "，存在累积风险";
+        }
+
         points.push({
           id: `rp-${section.id}-${i}`,
           name: `${section.name}风险点${i + 1}`,
           lat: section.lat + Math.sin(angle) * distance,
           lng: section.lng + Math.cos(angle) * distance,
-          level: section.riskLevel,
-          description: `${section.name}断面水位${section.predictedLevel}m，${
-            section.riskLevel === "high" ? "超危险水位" : "接近警戒水位"
-          }`,
+          level: pointLevel,
+          description,
         });
       }
     });
@@ -153,6 +328,15 @@ export default function Scheme() {
       s.dangerLevel,
       getRiskLevelInfo(s.riskLevel).label,
     ]),
+  };
+
+  const handleGenerateCommand = () => {
+    if (!selectedScheme) return;
+    navigate(`/command?schemeId=${selectedScheme.id}`);
+  };
+
+  const handleViewCommandDetail = (commandId: string) => {
+    navigate(`/command?commandId=${commandId}`);
   };
 
   return (
@@ -250,6 +434,9 @@ export default function Scheme() {
                         <MapPin className="w-4 h-4 text-primary-500" />
                         {reservoir.name}
                       </h4>
+                      <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">
+                        预计影响: {reservoirImpactValues.find(v => v.reservoirId === reservoir.id)?.impactValue || 0}
+                      </span>
                     </div>
 
                     <div className="space-y-3">
@@ -514,6 +701,95 @@ export default function Scheme() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="data-card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-primary-500" />
+            本方案生成的调度指令
+          </h3>
+          {relatedCommands.length > 0 && (
+            <button
+              onClick={handleGenerateCommand}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <Plus className="w-4 h-4" />
+              生成新指令
+            </button>
+          )}
+        </div>
+
+        {relatedCommands.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    指令ID
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    标题
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    状态
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    创建时间
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    执行人
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase">
+                    操作
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {relatedCommands.map((cmd) => (
+                  <tr key={cmd.id} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-3 px-4 text-sm text-gray-600 font-mono">
+                      {cmd.id}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-800 font-medium">
+                      {cmd.title}
+                    </td>
+                    <td className="py-3 px-4">
+                      <StatusBadge status={cmd.status} />
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-600">
+                      {formatTime(cmd.createTime)}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-600">
+                      {cmd.executor}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        onClick={() => handleViewCommandDetail(cmd.id)}
+                        className="text-primary-600 hover:text-primary-700 text-sm font-medium flex items-center gap-1 ml-auto"
+                      >
+                        <Eye className="w-4 h-4" />
+                        查看详情
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+            <p className="text-gray-500 mb-4">暂无调度指令</p>
+            <button
+              onClick={handleGenerateCommand}
+              className="btn-primary flex items-center gap-2 mx-auto"
+            >
+              <Plus className="w-4 h-4" />
+              生成指令
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

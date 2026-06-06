@@ -7,7 +7,7 @@ import ExportButton from "../components/Common/ExportButton";
 import { riverStations } from "../data/river";
 import { useAppStore } from "../store/useAppStore";
 import { formatNumber, formatTime, getTrendColor, getTrendIcon } from "../utils/format";
-import { generateTimeLabels, getDataCount, generateRandomSeries } from "../utils/timeSeries";
+import { generateTimeLabels, getDataCount, generateRandomSeries, calcMaxLevel } from "../utils/timeSeries";
 
 export default function River() {
   const chartRef = useRef<ChartRef>(null);
@@ -18,10 +18,15 @@ export default function River() {
   const dataCount = getDataCount(timeRange);
 
   const stationData = useMemo(() => {
-    return riverStations.map((s) => ({
-      ...s,
-      timeSeries: generateRandomSeries(s.currentLevel, 0.5, dataCount, s.trend),
-    }));
+    return riverStations.map((s) => {
+      const timeSeries = generateRandomSeries(s.currentLevel, 0.5, dataCount, s.trend);
+      const timeRangeData = calcMaxLevel({ ...s, timeSeries }, timeRange);
+      return {
+        ...s,
+        timeSeries,
+        timeRangeData,
+      };
+    });
   }, [timeRange, dataCount]);
 
   const chartData = stationData.map((s, i) => ({
@@ -34,13 +39,15 @@ export default function River() {
   const warningStations = stationData.filter(
     (s) => s.currentLevel >= s.warningLevel
   ).length;
-  const maxLevel = Math.max(...stationData.map((s) => s.currentLevel));
+  const maxLevel = Math.max(...stationData.map((s) => s.timeRangeData?.maxLevel ?? s.currentLevel));
   const avgLevel =
-    stationData.reduce((sum, s) => sum + s.currentLevel, 0) / totalStations;
+    stationData.reduce((sum, s) => sum + (s.timeRangeData?.avgLevel ?? s.currentLevel), 0) / totalStations;
 
   const tableHeaders = [
     "站点名称",
     "当前水位 (m)",
+    "时段最高 (m)",
+    "时段平均 (m)",
     "警戒水位 (m)",
     "危险水位 (m)",
     "趋势",
@@ -50,6 +57,8 @@ export default function River() {
   const tableRows = stationData.map((s) => [
     s.name,
     formatNumber(s.currentLevel),
+    formatNumber(s.timeRangeData?.maxLevel ?? s.currentLevel),
+    formatNumber(s.timeRangeData?.avgLevel ?? s.currentLevel),
     s.warningLevel,
     s.dangerLevel,
     s.trend === "up" ? "上涨" : s.trend === "down" ? "下降" : "平稳",
@@ -134,6 +143,8 @@ export default function River() {
               <tr>
                 <th className="table-header">站点名称</th>
                 <th className="table-header">当前水位 (m)</th>
+                <th className="table-header">时段最高 (m)</th>
+                <th className="table-header">时段平均 (m)</th>
                 <th className="table-header">警戒水位 (m)</th>
                 <th className="table-header">危险水位 (m)</th>
                 <th className="table-header">趋势</th>
@@ -159,6 +170,12 @@ export default function River() {
                     <td className="table-cell font-medium">{station.name}</td>
                     <td className="table-cell font-mono font-medium">
                       {formatNumber(station.currentLevel)}
+                    </td>
+                    <td className="table-cell font-mono font-medium text-primary-600">
+                      {formatNumber(station.timeRangeData?.maxLevel ?? station.currentLevel)}
+                    </td>
+                    <td className="table-cell font-mono text-primary-600">
+                      {formatNumber(station.timeRangeData?.avgLevel ?? station.currentLevel)}
                     </td>
                     <td className="table-cell font-mono">
                       {station.warningLevel}

@@ -167,6 +167,7 @@ export const shiftHandovers: ShiftHandover[] = [
     keyPoints: "1. 清江水库当前水位198.5m，接近汛限水位；2. 丹江口水库正在执行预泄指令；3. 襄阳、恩施、荆州雨量站超警戒。",
     pendingTasks: "1. 密切关注清江水库水位变化，适时调整泄量；2. 跟踪丹江口预泄执行情况；3. 今日10点会商准备调度例会。",
     remarks: "水情整体平稳，需防范局地强降雨",
+    status: "pending_confirm",
   },
   {
     id: "shift-002",
@@ -177,5 +178,7 @@ export const shiftHandovers: ShiftHandover[] = [
     keyPoints: "1. 白天流域内有分散性阵雨，部分站点降雨量较大；2. 三峡水库维持当前出库流量不变。",
     pendingTasks: "1. 夜间关注夜间降雨情况；2. 每2小时巡查一次关键站点数据。",
     remarks: "注意夜间值班纪律",
+    status: "confirmed",
+    confirmTime: "2024-06-05 20:15:00",
   },
 ];

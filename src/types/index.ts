@@ -1,3 +1,8 @@
+export interface RainfallTimeRangeData {
+  totalRain: number;
+  maxIntensity: number;
+}
+
 export interface RainfallStation {
   id: string;
   name: string;
@@ -9,6 +14,13 @@ export interface RainfallStation {
   threshold: number;
   isAlert: boolean;
   alertLevel: "normal" | "warning" | "danger";
+  timeSeries?: number[];
+  timeRangeData?: RainfallTimeRangeData;
+}
+
+export interface RiverTimeRangeData {
+  maxLevel: number;
+  avgLevel: number;
 }
 
 export interface RiverStation {
@@ -22,6 +34,8 @@ export interface RiverStation {
   trend: "up" | "down" | "stable";
   hourlyLevel: number[];
   updateTime: string;
+  timeSeries?: number[];
+  timeRangeData?: RiverTimeRangeData;
 }
 
 export interface DischargePoint {
@@ -32,6 +46,11 @@ export interface DischargePoint {
 export interface StoragePoint {
   level: number;
   storage: number;
+}
+
+export interface ReservoirTimeRangeData {
+  avgStorage: number;
+  maxLevel: number;
 }
 
 export interface Reservoir {
@@ -49,6 +68,8 @@ export interface Reservoir {
   outflow: number;
   dischargeCapacity: DischargePoint[];
   storageCurve: StoragePoint[];
+  timeSeries?: number[];
+  timeRangeData?: ReservoirTimeRangeData;
 }
 
 export interface Forecast {
@@ -107,6 +128,7 @@ export interface Command {
   completeTime?: string;
   feedback?: string;
   smsSent: boolean;
+  schemeId?: string;
 }
 
 export interface DispatchLog {
@@ -163,6 +185,8 @@ export interface ShiftHandover {
   keyPoints: string;
   pendingTasks: string;
   remarks: string;
+  status: "pending_confirm" | "confirmed";
+  confirmTime?: string;
 }
 
 export interface AlertItem {

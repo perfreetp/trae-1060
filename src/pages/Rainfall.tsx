@@ -7,7 +7,7 @@ import ExportButton from "../components/Common/ExportButton";
 import { rainfallStations } from "../data/rainfall";
 import { useAppStore } from "../store/useAppStore";
 import { formatNumber, formatTime } from "../utils/format";
-import { generateTimeLabels, getDataCount, generateRandomSeries } from "../utils/timeSeries";
+import { generateTimeLabels, getDataCount, generateRandomSeries, calcStationRainfall } from "../utils/timeSeries";
 
 export default function Rainfall() {
   const [selectedStations, setSelectedStations] = useState<string[]>([
@@ -29,10 +29,15 @@ export default function Rainfall() {
   };
 
   const stationData = useMemo(() => {
-    return rainfallStations.map((s) => ({
-      ...s,
-      timeSeries: generateRandomSeries(s.currentRain, s.currentRain * 0.8, dataCount, s.isAlert ? "up" : "stable"),
-    }));
+    return rainfallStations.map((s) => {
+      const timeSeries = generateRandomSeries(s.currentRain, s.currentRain * 0.8, dataCount, s.isAlert ? "up" : "stable");
+      const timeRangeData = calcStationRainfall({ ...s, timeSeries }, timeRange);
+      return {
+        ...s,
+        timeSeries,
+        timeRangeData,
+      };
+    });
   }, [timeRange, dataCount]);
 
   const chartData = stationData
@@ -43,17 +48,18 @@ export default function Rainfall() {
       color: colors[i % colors.length],
     }));
 
-  const tableHeaders = ["站点名称", "当前降雨 (mm/h)", "日累计 (mm)", "警戒值 (mm)", "状态", "更新时间"];
+  const tableHeaders = ["站点名称", "当前降雨 (mm/h)", "日累计 (mm)", "时段累计 (mm)", "警戒值 (mm)", "状态", "更新时间"];
   const tableRows = stationData.map((s) => [
     s.name,
     formatNumber(s.currentRain),
     formatNumber(s.dailyRain),
+    formatNumber(s.timeRangeData?.totalRain ?? 0),
     s.threshold,
     s.isAlert ? (s.alertLevel === "danger" ? "超警戒" : "接近警戒") : "正常",
     formatTime("2024-06-06 12:00:00"),
   ]);
 
-  const totalRain = stationData.reduce((sum, s) => sum + s.dailyRain, 0);
+  const totalRain = stationData.reduce((sum, s) => sum + (s.timeRangeData?.totalRain ?? s.dailyRain), 0);
   const alertCount = stationData.filter((s) => s.isAlert).length;
 
   return (
@@ -150,34 +156,36 @@ export default function Rainfall() {
             </thead>
             <tbody>
               {stationData.map((station) => (
-                <tr
-                  key={station.id}
-                  className={station.isAlert ? "bg-red-50" : "hover:bg-gray-50"}
-                >
-                  <td className="table-cell font-medium">{station.name}</td>
-                  <td className="table-cell font-mono">
-                    {formatNumber(station.currentRain)}
-                  </td>
-                  <td className="table-cell font-mono">
-                    {formatNumber(station.dailyRain)}
-                  </td>
-                  <td className="table-cell font-mono">{station.threshold}</td>
-                  <td className="table-cell">
-                    {station.isAlert ? (
-                      <span className="flex items-center gap-1 text-alert-danger">
-                        <AlertTriangle className="w-4 h-4" />
-                        {station.alertLevel === "danger"
-                          ? "超警戒"
-                          : "接近警戒"}
-                      </span>
-                    ) : (
-                      <span className="text-alert-success">正常</span>
-                    )}
-                  </td>
-                  <td className="table-cell text-gray-500">
-                    {formatTime("2024-06-06 12:00:00")}
-                  </td>
-                </tr>
+                <tr key={station.id}
+                className={station.isAlert ? "bg-red-50" : "hover:bg-gray-50"}
+              >
+                <td className="table-cell font-medium">{station.name}</td>
+                <td className="table-cell font-mono">
+                  {formatNumber(station.currentRain)}
+                </td>
+                <td className="table-cell font-mono">
+                  {formatNumber(station.dailyRain)}
+                </td>
+                <td className="table-cell font-mono font-medium text-primary-600">
+                  {formatNumber(station.timeRangeData?.totalRain ?? 0)}
+                </td>
+                <td className="table-cell font-mono">{station.threshold}</td>
+                <td className="table-cell">
+                  {station.isAlert ? (
+                    <span className="flex items-center gap-1 text-alert-danger">
+                      <AlertTriangle className="w-4 h-4" />
+                      {station.alertLevel === "danger"
+                        ? "超警戒"
+                        : "接近警戒"}
+                    </span>
+                  ) : (
+                    <span className="text-alert-success">正常</span>
+                  )}
+                </td>
+                <td className="table-cell text-gray-500">
+                  {formatTime("2024-06-06 12:00:00")}
+                </td>
+              </tr>
               ))}
             </tbody>
           </table>

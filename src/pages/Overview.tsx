@@ -1,4 +1,16 @@
-import { CloudRain, Waves, Droplets, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  CloudRain,
+  Waves,
+  Droplets,
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Minus,
+  ChevronRight,
+  Calendar,
+} from "lucide-react";
 import DataCard from "../components/Common/DataCard";
 import AlertPanel from "../components/Common/AlertPanel";
 import BasinMap from "../components/Map/BasinMap";
@@ -8,9 +20,153 @@ import { reservoirs } from "../data/reservoir";
 import { rainfallStations } from "../data/rainfall";
 import { riverStations } from "../data/river";
 import { formatNumber } from "../utils/format";
+import type { TimeRange } from "../types";
+
+const timeRangeOptions: { value: TimeRange; label: string }[] = [
+  { value: "6h", label: "近6小时" },
+  { value: "24h", label: "近24小时" },
+  { value: "3d", label: "近3天" },
+  { value: "7d", label: "近7天" },
+];
+
+interface ComparisonData {
+  rainfall: {
+    base: number;
+    compare: number;
+    diff: number;
+    percent: number;
+    trend: "up" | "down" | "stable";
+  };
+  waterLevel: {
+    base: number;
+    compare: number;
+    diff: number;
+    trend: "up" | "down" | "stable";
+  };
+  storage: {
+    base: number;
+    compare: number;
+    diff: number;
+    percent: number;
+    trend: "up" | "down" | "stable";
+  };
+  alerts: {
+    base: number;
+    compare: number;
+    diff: number;
+    trend: "up" | "down" | "stable";
+  };
+}
+
+const generateMockData = (
+  baseRange: TimeRange,
+  compareRange: TimeRange
+): ComparisonData => {
+  const rangeFactors: Record<TimeRange, number> = {
+    "6h": 1,
+    "24h": 4,
+    "3d": 12,
+    "7d": 28,
+  };
+
+  const baseFactor = rangeFactors[baseRange];
+  const compareFactor = rangeFactors[compareRange];
+
+  const baseRainfall = 12.5 * baseFactor;
+  const compareRainfall = 15.8 * compareFactor;
+  const rainfallDiff = compareRainfall - baseRainfall;
+  const rainfallPercent = (rainfallDiff / baseRainfall) * 100;
+
+  const baseWaterLevel = 42.3;
+  const compareWaterLevel = 43.1;
+  const waterLevelDiff = compareWaterLevel - baseWaterLevel;
+
+  const baseStorage = 125.6;
+  const compareStorage = 128.3;
+  const storageDiff = compareStorage - baseStorage;
+  const storagePercent = (storageDiff / baseStorage) * 100;
+
+  const baseAlerts = 3;
+  const compareAlerts = 5;
+  const alertsDiff = compareAlerts - baseAlerts;
+
+  const getTrend = (diff: number): "up" | "down" | "stable" => {
+    if (diff > 0.1) return "up";
+    if (diff < -0.1) return "down";
+    return "stable";
+  };
+
+  return {
+    rainfall: {
+      base: baseRainfall,
+      compare: compareRainfall,
+      diff: rainfallDiff,
+      percent: rainfallPercent,
+      trend: getTrend(rainfallDiff),
+    },
+    waterLevel: {
+      base: baseWaterLevel,
+      compare: compareWaterLevel,
+      diff: waterLevelDiff,
+      trend: getTrend(waterLevelDiff),
+    },
+    storage: {
+      base: baseStorage,
+      compare: compareStorage,
+      diff: storageDiff,
+      percent: storagePercent,
+      trend: getTrend(storageDiff),
+    },
+    alerts: {
+      base: baseAlerts,
+      compare: compareAlerts,
+      diff: alertsDiff,
+      trend: getTrend(alertsDiff),
+    },
+  };
+};
+
+const generateChartData = (range: TimeRange) => {
+  const dataPoints: Record<TimeRange, number> = {
+    "6h": 6,
+    "24h": 12,
+    "3d": 18,
+    "7d": 28,
+  };
+  const count = dataPoints[range];
+
+  const xLabels: Record<TimeRange, string[]> = {
+    "6h": ["2h前", "1h前", "现在", "1h后", "2h后", "3h后"],
+    "24h": ["0时", "4时", "8时", "12时", "16时", "20时", "现在"],
+    "3d": ["第1天", "第2天", "第3天", "第4天", "第5天", "第6天", "现在"],
+    "7d": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"],
+  };
+
+  const rainfallValues = Array.from(
+    { length: Math.min(count, 7) },
+    () => Math.random() * 20 + 5
+  );
+  const waterLevelValues = Array.from(
+    { length: Math.min(count, 7) },
+    () => 40 + Math.random() * 5
+  );
+
+  return {
+    xAxisData: xLabels[range].slice(0, Math.min(count, 7)),
+    rainfallValues,
+    waterLevelValues,
+  };
+};
 
 export default function Overview() {
+  const navigate = useNavigate();
   const { alerts } = useAppStore();
+
+  const [baseTimeRange, setBaseTimeRange] = useState<TimeRange>("24h");
+  const [compareTimeRange, setCompareTimeRange] = useState<TimeRange>("6h");
+
+  const comparisonData = generateMockData(baseTimeRange, compareTimeRange);
+  const chartData = generateChartData(compareTimeRange);
 
   const totalRainfall = rainfallStations.reduce(
     (sum, s) => sum + s.dailyRain,
@@ -25,7 +181,134 @@ export default function Overview() {
   );
   const alertCount = alerts.filter((a) => a.level !== "info").length;
 
-  const hours = ["8h", "10h", "12h", "14h", "16h"];
+  const getTrendColor = (trend: "up" | "down" | "stable") => {
+    switch (trend) {
+      case "up":
+        return "text-red-500";
+      case "down":
+        return "text-green-500";
+      default:
+        return "text-gray-500";
+    }
+  };
+
+  const getTrendIcon = (trend: "up" | "down" | "stable") => {
+    switch (trend) {
+      case "up":
+        return <ArrowUp className="w-5 h-5" />;
+      case "down":
+        return <ArrowDown className="w-5 h-5" />;
+      default:
+        return <Minus className="w-5 h-5" />;
+    }
+  };
+
+  const TimeRangeSelect = ({
+    value,
+    onChange,
+    label,
+  }: {
+    value: TimeRange;
+    onChange: (v: TimeRange) => void;
+    label: string;
+  }) => (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-gray-500">{label}</span>
+      <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1 border border-gray-200">
+        <Calendar className="w-4 h-4 text-gray-400 ml-2" />
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value as TimeRange)}
+          className="bg-transparent text-sm text-gray-700 pr-2 py-1 focus:outline-none cursor-pointer"
+        >
+          {timeRangeOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+
+  const ComparisonCard = ({
+    title,
+    icon,
+    baseValue,
+    compareValue,
+    diff,
+    unit,
+    percent,
+    trend,
+    showPercent = true,
+    navigatePath,
+  }: {
+    title: string;
+    icon: React.ReactNode;
+    baseValue: number;
+    compareValue: number;
+    diff: number;
+    unit: string;
+    percent?: number;
+    trend: "up" | "down" | "stable";
+    showPercent?: boolean;
+    navigatePath: string;
+  }) => (
+    <div className="data-card hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-lg bg-primary-50 text-primary-600">
+            {icon}
+          </div>
+          <h4 className="font-medium text-gray-800">{title}</h4>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-end justify-between">
+          <div>
+            <p className="text-xs text-gray-400 mb-1">对比期值</p>
+            <p className="text-2xl font-bold text-gray-800 font-mono">
+              {formatNumber(compareValue, 1)}
+              <span className="text-sm text-gray-500 ml-1">{unit}</span>
+            </p>
+          </div>
+          <div
+            className={`flex items-center gap-1 ${getTrendColor(trend)} font-medium`}
+          >
+            {getTrendIcon(trend)}
+            <span className="text-lg">
+              {showPercent && percent !== undefined
+                ? `${percent > 0 ? "+" : ""}${formatNumber(percent, 1)}%`
+                : `${diff > 0 ? "+" : ""}${formatNumber(diff, 2)}${unit}`}
+            </span>
+          </div>
+        </div>
+
+        <div className="pt-3 border-t border-gray-100">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-gray-400">
+              基准期: {formatNumber(baseValue, 1)}
+              {unit}
+            </span>
+            <span className="text-gray-400">
+              差值: {diff > 0 ? "+" : ""}
+              {formatNumber(diff, 2)}
+              {unit}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <button
+        onClick={() => navigate(navigatePath)}
+        className="mt-4 w-full py-2 text-sm text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors flex items-center justify-center gap-1 group-hover:gap-2"
+      >
+        查看详情
+        <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+      </button>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -87,18 +370,89 @@ export default function Overview() {
         </div>
       </div>
 
+      <div className="data-card">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+            <span className="w-1 h-5 bg-primary-500 rounded-full"></span>
+            态势对比
+          </h3>
+          <div className="flex items-center gap-6">
+            <TimeRangeSelect
+              value={baseTimeRange}
+              onChange={setBaseTimeRange}
+              label="基准期:"
+            />
+            <div className="text-gray-300">VS</div>
+            <TimeRangeSelect
+              value={compareTimeRange}
+              onChange={setCompareTimeRange}
+              label="对比期:"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4">
+          <ComparisonCard
+            title="雨量变化"
+            icon={<CloudRain className="w-5 h-5" />}
+            baseValue={comparisonData.rainfall.base}
+            compareValue={comparisonData.rainfall.compare}
+            diff={comparisonData.rainfall.diff}
+            unit="mm"
+            percent={comparisonData.rainfall.percent}
+            trend={comparisonData.rainfall.trend}
+            navigatePath="/rainfall"
+          />
+          <ComparisonCard
+            title="水位涨幅"
+            icon={<Waves className="w-5 h-5" />}
+            baseValue={comparisonData.waterLevel.base}
+            compareValue={comparisonData.waterLevel.compare}
+            diff={comparisonData.waterLevel.diff}
+            unit="m"
+            trend={comparisonData.waterLevel.trend}
+            showPercent={false}
+            navigatePath="/river"
+          />
+          <ComparisonCard
+            title="库容变化"
+            icon={<Droplets className="w-5 h-5" />}
+            baseValue={comparisonData.storage.base}
+            compareValue={comparisonData.storage.compare}
+            diff={comparisonData.storage.diff}
+            unit="亿m³"
+            percent={comparisonData.storage.percent}
+            trend={comparisonData.storage.trend}
+            navigatePath="/reservoir/res-001"
+          />
+          <ComparisonCard
+            title="风险点增减"
+            icon={<AlertTriangle className="w-5 h-5" />}
+            baseValue={comparisonData.alerts.base}
+            compareValue={comparisonData.alerts.compare}
+            diff={comparisonData.alerts.diff}
+            unit="个"
+            trend={comparisonData.alerts.trend}
+            showPercent={false}
+            navigatePath="/scheme"
+          />
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-6">
         <div className="data-card">
           <LineChart
             data={[
               {
                 name: "流域平均降雨",
-                values: rainfallStations.map((s) => s.dailyRain / 10),
+                values: chartData.rainfallValues,
                 color: "#3E92CC",
               },
             ]}
-            xAxisData={hours}
-            title="降雨趋势"
+            xAxisData={chartData.xAxisData}
+            title={`降雨趋势 (${
+              timeRangeOptions.find((o) => o.value === compareTimeRange)?.label
+            })`}
             yAxisName="mm"
             height={250}
             showLegend={false}
@@ -109,17 +463,19 @@ export default function Overview() {
             data={[
               {
                 name: "宜昌站",
-                values: riverStations[0].hourlyLevel,
+                values: chartData.waterLevelValues,
                 color: "#F77F00",
               },
               {
                 name: "沙市站",
-                values: riverStations[1].hourlyLevel,
+                values: chartData.waterLevelValues.map((v) => v + 0.5),
                 color: "#D62828",
               },
             ]}
-            xAxisData={hours}
-            title="关键站点水位趋势"
+            xAxisData={chartData.xAxisData}
+            title={`关键站点水位趋势 (${
+              timeRangeOptions.find((o) => o.value === compareTimeRange)?.label
+            })`}
             yAxisName="m"
             height={250}
           />

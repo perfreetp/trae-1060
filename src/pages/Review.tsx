@@ -43,6 +43,7 @@ export default function Review() {
     updateIssueStatus,
     assignIssue,
     addShiftHandover,
+    confirmShiftHandover,
   } = useAppStore();
 
   const [activeTab, setActiveTab] = useState<"history" | "score" | "issues" | "shift">("history");
@@ -50,6 +51,7 @@ export default function Review() {
   const [selectedScoreFloodId, setSelectedScoreFloodId] = useState(historicalFloods[0].id);
 
   const radarChartRef = useRef<ChartRef>(null);
+  const dualAxisChartRef = useRef<ChartRef>(null);
 
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -179,12 +181,46 @@ export default function Review() {
   };
 
   const handleExportRadar = () => {
+    const flood = historicalFloods.find((f) => f.id === selectedScoreFloodId);
     exportChartAsImage(
       radarChartRef.current,
       "复盘评估",
-      selectedFlood.name,
+      flood?.name || "复盘评分",
       "评分雷达图"
     );
+  };
+
+  const handleExportRainfallWaterChart = () => {
+    const timeRange = `${formatDate(selectedFlood.startTime)}-${formatDate(selectedFlood.endTime)}`;
+    exportChartAsImage(
+      dualAxisChartRef.current,
+      selectedFlood.name,
+      "雨情水情曲线",
+      timeRange
+    );
+  };
+
+  const handleExportDispatchCommandsCSV = () => {
+    const headers = ["时间", "操作人", "动作", "详情"];
+    const rows = selectedFlood.dispatchCommands.map((cmd) => [
+      formatTime(cmd.time),
+      cmd.operator,
+      cmd.action,
+      cmd.detail,
+    ]);
+    exportTableAsCSV(headers, rows, selectedFlood.name, "调度指令时间线", "");
+  };
+
+  const handleExportRelatedIssuesCSV = () => {
+    const headers = ["问题标题", "严重程度", "状态", "责任人", "创建时间"];
+    const rows = relatedIssues.map((issue) => [
+      issue.title,
+      issue.level === "critical" ? "严重" : issue.level === "major" ? "重要" : "一般",
+      issue.status === "open" ? "待处理" : issue.status === "processing" ? "处理中" : "已关闭",
+      issue.assignee,
+      formatTime(issue.createTime),
+    ]);
+    exportTableAsCSV(headers, rows, selectedFlood.name, "问题清单", "");
   };
 
   const handleExportIssuesCSV = () => {
@@ -349,8 +385,16 @@ export default function Review() {
             <div className="data-card">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-gray-800">雨情水情曲线</h3>
+                <button
+                  onClick={handleExportRainfallWaterChart}
+                  className="btn-secondary text-xs py-1 flex items-center gap-1"
+                >
+                  <Download className="w-3 h-3" />
+                  导出图片
+                </button>
               </div>
               <DualAxisChart
+                ref={dualAxisChartRef}
                 leftData={selectedFlood.levelData}
                 rightData={selectedFlood.rainfallData}
                 xAxisData={selectedFlood.timeLabels}
@@ -361,7 +405,16 @@ export default function Review() {
             </div>
 
             <div className="data-card">
-              <h3 className="font-semibold text-gray-800 mb-4">调度指令时间线</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-800">调度指令时间线</h3>
+                <button
+                  onClick={handleExportDispatchCommandsCSV}
+                  className="btn-secondary text-xs py-1 flex items-center gap-1"
+                >
+                  <Download className="w-3 h-3" />
+                  导出CSV
+                </button>
+              </div>
               <div className="relative">
                 <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
                 <div className="space-y-4">
@@ -749,7 +802,14 @@ export default function Review() {
           </div>
           <div className="space-y-4">
             {shiftHandovers.map((shift) => (
-              <div key={shift.id} className="data-card">
+              <div
+                key={shift.id}
+                className={`data-card ${
+                  shift.status === "pending_confirm"
+                    ? "border-yellow-400 border-2 bg-yellow-50"
+                    : ""
+                }`}
+              >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <div
@@ -766,18 +826,38 @@ export default function Review() {
                         {shift.shiftType === "day" ? "白班" : "夜班"}交接
                       </h4>
                       <p className="text-sm text-gray-500">
-                        {formatTime(shift.handoverTime)}
+                        填写时间: {formatTime(shift.handoverTime)}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <span className="text-gray-500">
-                      交班人: <span className="text-gray-800">{shift.outgoingPerson}</span>
-                    </span>
-                    <span className="text-gray-500">
-                      接班人: <span className="text-gray-800">{shift.incomingPerson}</span>
-                    </span>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-medium ${
+                      shift.status === "pending_confirm"
+                        ? "bg-yellow-100 text-yellow-800"
+                        : "bg-green-100 text-green-800"
+                    }`}
+                  >
+                    {shift.status === "pending_confirm" ? "待确认" : "已交接"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="flex items-center gap-2 text-sm">
+                    <User className="w-4 h-4 text-gray-400" />
+                    <span className="text-gray-500">交班人:</span>
+                    <span className="text-gray-800 font-medium">{shift.outgoingPerson}</span>
                   </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <User className="w-4 h-4 text-gray-400" />
+                    <span className="text-gray-500">接班人:</span>
+                    <span className="text-gray-800 font-medium">{shift.incomingPerson}</span>
+                  </div>
+                  {shift.status === "confirmed" && shift.confirmTime && (
+                    <div className="flex items-center gap-2 text-sm col-span-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      <span className="text-gray-500">确认时间:</span>
+                      <span className="text-gray-800">{formatTime(shift.confirmTime)}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="p-3 bg-gray-50 rounded-lg">
@@ -793,6 +873,17 @@ export default function Review() {
                     <p className="text-sm text-gray-700">{shift.remarks}</p>
                   </div>
                 </div>
+                {shift.status === "pending_confirm" && (
+                  <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
+                    <button
+                      onClick={() => confirmShiftHandover(shift.id)}
+                      className="btn-primary flex items-center gap-2 text-sm py-2"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      确认交接
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
